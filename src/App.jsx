@@ -210,8 +210,17 @@ function QRCard({ produce, farmer }) {
   );
 }
 
-// ─── AI CROP PLAN — Gemini Free API ─────────────────────────────
+// ─── AI CROP PLAN — Direct Local Connection ─────────────────────
 async function generateCropPlan(farmer) {
+  const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY; 
+console.log("DEBUG: All Vite env variables:", import.meta.env);
+  if (!GEMINI_API_KEY) {
+    alert("🚨 API Key missing! Make sure you have a .env file with VITE_GEMINI_API_KEY set.");
+    throw new Error("API Key missing");
+  }
+
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+
   const prompt = `You are Squire Digital Brain — an AI agricultural planning system for restorative farming in semi-arid India (Bundelkhand/Central UP).
 
 FARMER PROFILE:
@@ -229,13 +238,20 @@ Return ONLY a single compact JSON object. No markdown. No text before or after. 
 
 Replace ALL values above to match this specific farmer. Keep exact same keys and structure. Keep all strings under 60 characters.`;
 
+  const optimizedPrompt = prompt + "\n\nIMPORTANT: Return ONLY a valid, clean raw JSON object string. Do not wrap it in markdown code blocks like \`\`\`json ... \`\`\`. Start directly with { and end with }.";
+
   let res;
   try {
-    // Calls our Vercel serverless function /api/gemini which proxies to Gemini securely
-    res = await fetch("/api/gemini", {
+    res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt })
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: optimizedPrompt }] }],
+        generationConfig: {
+          temperature: 0.2,
+          maxOutputTokens: 8192,
+        }
+      })
     });
   } catch (networkErr) {
     throw new Error(`Network error: ${networkErr.message}`);
@@ -244,30 +260,34 @@ Replace ALL values above to match this specific farmer. Keep exact same keys and
   if (!res.ok) {
     let errBody = "";
     try { errBody = await res.text(); } catch (_) {}
-    throw new Error(`API error ${res.status}: ${errBody.slice(0, 300)}`);
+    throw new Error(`API HTTP ${res.status}: ${errBody.slice(0, 300)}`);
   }
 
   let data;
   try {
     data = await res.json();
   } catch (parseErr) {
-    throw new Error(`Response parse error: ${parseErr.message}`);
+    throw new Error(`Parse error: ${parseErr.message}`);
   }
 
-  if (data.error) {
-    throw new Error(`Gemini error: ${typeof data.error === "string" ? data.error : JSON.stringify(data.error)}`);
+  let text = "";
+  const parts = data?.candidates?.[0]?.content?.parts || [];
+  for (const part of parts) {
+    if (part.text) text += part.text;
   }
 
-  const text = (data.text || "").trim();
+  text = text.trim();
+  if (text.startsWith("```json")) text = text.substring(7);
+  else if (text.startsWith("```")) text = text.substring(3);
+  if (text.endsWith("```")) text = text.substring(0, text.length - 3);
+  text = text.trim();
+
   if (!text) throw new Error("Empty response from Gemini");
 
-  const jsonMatch = text.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) throw new Error(`No JSON in response. Got: ${text.slice(0, 200)}`);
-
   try {
-    return JSON.parse(jsonMatch[0]);
+    return JSON.parse(text);
   } catch (jsonErr) {
-    throw new Error(`JSON parse failed: ${jsonErr.message}. Raw: ${jsonMatch[0].slice(0, 200)}`);
+    throw new Error(`JSON parse failed.`);
   }
 }
 
