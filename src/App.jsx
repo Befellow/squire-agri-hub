@@ -2185,11 +2185,6 @@ export default function App() {
                 {v === "reports" ? "📊 Reports" : "🚜 Machinery"}
               </button>
             ))}
-            {/* API key status pill */}
-            <button onClick={() => setShowKeyInput(s => !s)}
-              style={{ background: apiKey ? "rgba(82,183,136,0.25)" : "rgba(196,151,58,0.3)", border: `1px solid ${apiKey ? C.greenLight : C.gold}`, borderRadius: 6, color: apiKey ? C.greenLight : C.goldLight, fontSize: 11, cursor: "pointer", padding: "4px 10px", fontWeight: 600 }}>
-              {apiKey ? "🔑 AI Ready" : "🔑 Add Key"}
-            </button>
           </div>
         </div>
       </div>
