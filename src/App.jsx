@@ -500,11 +500,6 @@ const handleGenerate = async () => {
 
       {tab === "plan" && (
         <div>
-          {error === "NO_KEY" && (
-            <div style={{ marginBottom: 14 }}>
-              <ApiKeyGate onSave={(k) => { _geminiKey = k; setError(null); handleGenerate(); }} />
-            </div>
-          )}
           {!plan && !loading && error !== "NO_KEY" && (
             <Card style={{ textAlign: "center", padding: 40 }}>
               <div style={{ fontSize: 48, marginBottom: 12 }}>🧠</div>
