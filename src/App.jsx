@@ -395,20 +395,18 @@ function FarmerDetail({ farmer, onBack, onUpdateFarmer, rentals, onAddRental }) 
   const [newProduce, setNewProduce] = useState({ crop: "", qty: "", stage: "", buyer: "", harvestDate: "" });
   const [addingProduce, setAddingProduce] = useState(false);
 
-  const handleGenerate = async () => {
-    if (!_geminiKey) { setError("NO_KEY"); return; }
-    setLoading(true); setError(null);
+const handleGenerate = async () => {
+    setLoading(true); 
+    setError(null);
     try {
       const result = await generateCropPlan(farmer);
       setPlan(result);
       onUpdateFarmer({ ...farmer, plan: result, planGenerated: true, status: "Plan Generated" });
     } catch (e) {
-      if (e.message === "NO_KEY") setError("NO_KEY");
-      else setError(e.message);
+      setError(e.message);
     }
     setLoading(false);
   };
-
   const handleAddProduce = () => {
 
     if (!newProduce.crop || !newProduce.qty || !newProduce.stage) return;
