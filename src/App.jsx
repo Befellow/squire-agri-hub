@@ -210,16 +210,15 @@ function QRCard({ produce, farmer }) {
   );
 }
 
-// ─── AI CROP PLAN — Direct Local Connection ─────────────────────
-async function generateCropPlan(farmer) {
-  const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY; 
-console.log("DEBUG: All Vite env variables:", import.meta.env);
-  if (!GEMINI_API_KEY) {
-    alert("🚨 API Key missing! Make sure you have a .env file with VITE_GEMINI_API_KEY set.");
-    throw new Error("API Key missing");
-  }
+// ─── GEMINI API KEY STORE (session only) ─────────────────────────
+let _geminiKey = "";
+export function setGeminiKey(k) { _geminiKey = k.trim(); }
+export function getGeminiKey() { return _geminiKey; }
 
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+// ─── AI CROP PLAN — Gemini Direct Browser Call ───────────────────
+async function generateCropPlan(farmer) {
+  const apiKey = _geminiKey;
+  if (!apiKey) throw new Error("NO_KEY");
 
   const prompt = `You are Squire Digital Brain — an AI agricultural planning system for restorative farming in semi-arid India (Bundelkhand/Central UP).
 
@@ -232,27 +231,26 @@ FARMER PROFILE:
 - Crop History (last 3 seasons): ${farmer.cropHistory}
 - Economic Profile: ${farmer.economicProfile}
 
-Return ONLY a single compact JSON object. No markdown. No text before or after. All string values must be SHORT (under 60 chars).
+Return ONLY a single compact JSON object. No markdown. No text before or after. All string values SHORT (under 60 chars).
 
 {"soilHealthScore":55,"soilHealthGrade":"Fair","degradationRisk":"High","keyIssues":["Low SOC","Monocropping","N deficiency"],"year1":{"season1":{"crop":"Mustard","variety":"Pusa Bold","sowMonth":"Oct","harvestMonth":"Feb","expectedYield":"8-10 qtl/acre","netProfit":"18000-22000","soilBenefit":"Breaks wheat cycle"},"season2":{"crop":"Moong","variety":"Pusa Vishal","sowMonth":"Mar","harvestMonth":"Jun","expectedYield":"4-5 qtl/acre","netProfit":"10000-14000","soilBenefit":"Fixes nitrogen"}},"year3Target":{"socImprovement":"+0.4%","profitIncrease":"+35%","crops":["Mustard","Gram","Sesame"]},"year5Target":{"socImprovement":"+0.8%","profitIncrease":"+65%","crops":["Mustard","Arhar","Sesame"]},"fertilizerPrescription":{"organic":"Vermicompost 2t/acre pre-sowing","bio":"Rhizobium+PSB at seed treatment","chemical":"DAP 50kg/acre basal only","schedule":"Organic pre-sow, bio seed, DAP basal"},"pestAlert":{"riskLevel":"High","likely":["Aphids","White rust"],"bioIntervention":"Neem oil 3ml/L at 30 DAS"},"weatherLogic":{"sowingWindow":"Oct 15 - Nov 10","irrigationSchedule":"2x: flowering Dec, pod-fill Jan","harvestWindow":"Feb 15 - Mar 5"},"mandiTiming":{"bestMonth":"March-April","expectedPrice":"5400-5800/qtl","recommendation":"Hold till March for 10% premium"},"inputShoppingList":[{"item":"Mustard Seed","qty":"2 kg/acre","cost":"280","source":"Squire Outlet"},{"item":"Vermicompost","qty":"2t/acre","cost":"1800","source":"Squire Outlet"},{"item":"DAP Fertilizer","qty":"50 kg/acre","cost":"1350","source":"Squire Outlet"},{"item":"Neem Oil","qty":"3L","cost":"450","source":"Squire Outlet"}],"planScore":72,"profitabilityIndex":"High"}
 
-Replace ALL values above to match this specific farmer. Keep exact same keys and structure. Keep all strings under 60 characters.`;
-
-  const optimizedPrompt = prompt + "\n\nIMPORTANT: Return ONLY a valid, clean raw JSON object string. Do not wrap it in markdown code blocks like \`\`\`json ... \`\`\`. Start directly with { and end with }.";
+Replace ALL values to match this farmer's data. Same keys, same structure. Strings under 60 chars.`;
 
   let res;
   try {
-    res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: optimizedPrompt }] }],
-        generationConfig: {
-          temperature: 0.2,
-          maxOutputTokens: 8192,
-        }
-      })
-    });
+    // Gemini supports CORS — can be called directly from browser
+    res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: { temperature: 0.2, maxOutputTokens: 2048 },
+        }),
+      }
+    );
   } catch (networkErr) {
     throw new Error(`Network error: ${networkErr.message}`);
   }
@@ -260,38 +258,103 @@ Replace ALL values above to match this specific farmer. Keep exact same keys and
   if (!res.ok) {
     let errBody = "";
     try { errBody = await res.text(); } catch (_) {}
-    throw new Error(`API HTTP ${res.status}: ${errBody.slice(0, 300)}`);
+    throw new Error(`Gemini API error ${res.status}: ${errBody.slice(0, 300)}`);
   }
 
   let data;
-  try {
-    data = await res.json();
-  } catch (parseErr) {
-    throw new Error(`Parse error: ${parseErr.message}`);
-  }
+  try { data = await res.json(); } catch (e) { throw new Error("Failed to parse Gemini response"); }
 
-  let text = "";
-  const parts = data?.candidates?.[0]?.content?.parts || [];
-  for (const part of parts) {
-    if (part.text) text += part.text;
-  }
+  const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+  if (!text) throw new Error(`Empty Gemini response. Raw: ${JSON.stringify(data).slice(0, 200)}`);
 
-  text = text.trim();
-  if (text.startsWith("```json")) text = text.substring(7);
-  else if (text.startsWith("```")) text = text.substring(3);
-  if (text.endsWith("```")) text = text.substring(0, text.length - 3);
-  text = text.trim();
-
-  if (!text) throw new Error("Empty response from Gemini");
+  const jsonMatch = text.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) throw new Error(`No JSON found. Got: ${text.slice(0, 200)}`);
 
   try {
-    return JSON.parse(text);
+    return JSON.parse(jsonMatch[0]);
   } catch (jsonErr) {
-    throw new Error(`JSON parse failed.`);
+    throw new Error(`JSON parse failed: ${jsonErr.message}. Raw: ${jsonMatch[0].slice(0, 200)}`);
   }
 }
 
-// ─── ONBOARD FORM ───────────────────────────────────────────────
+// ─── API KEY GATE ─────────────────────────────────────────────────
+function ApiKeyGate({ onSave }) {
+  const [key, setKey] = useState("");
+  const [show, setShow] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState(null);
+
+  const handleTest = async () => {
+    if (!key.trim()) return;
+    setTesting(true); setTestResult(null);
+    _geminiKey = key.trim();
+    try {
+      const res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${key.trim()}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ contents: [{ parts: [{ text: "Reply with the word OK only." }] }], generationConfig: { maxOutputTokens: 5 } }),
+        }
+      );
+      if (res.ok) {
+        setTestResult("success");
+        setTimeout(() => { onSave(key.trim()); }, 800);
+      } else {
+        const d = await res.json();
+        setTestResult(`fail: ${d.error?.message || res.status}`);
+        _geminiKey = "";
+      }
+    } catch (e) {
+      setTestResult(`fail: ${e.message}`);
+      _geminiKey = "";
+    }
+    setTesting(false);
+  };
+
+  return (
+    <Card style={{ border: `2px solid ${C.gold}`, background: "#FFFBF0" }}>
+      <div style={{ display: "flex", gap: 10, alignItems: "flex-start", marginBottom: 14 }}>
+        <div style={{ fontSize: 32 }}>🔑</div>
+        <div>
+          <div style={{ fontWeight: 700, fontSize: 15, color: C.charcoal }}>Gemini API Key Required</div>
+          <div style={{ fontSize: 13, color: C.muted, marginTop: 2 }}>Free — 1,500 plans/day, no credit card</div>
+        </div>
+      </div>
+
+      <div style={{ background: C.cream, borderRadius: 8, padding: "10px 14px", marginBottom: 14, fontSize: 13, color: C.charcoal, lineHeight: 1.8 }}>
+        <strong>Get your free key in 60 seconds:</strong><br />
+        1. Open <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer" style={{ color: C.blue, fontWeight: 600 }}>aistudio.google.com/app/apikey</a><br />
+        2. Sign in with Google → click <strong>"Create API Key"</strong><br />
+        3. Copy and paste it below
+      </div>
+
+      <div style={{ position: "relative", marginBottom: 10 }}>
+        <input
+          type={show ? "text" : "password"}
+          value={key}
+          onChange={e => setKey(e.target.value)}
+          placeholder="AIza..."
+          style={{ width: "100%", padding: "10px 44px 10px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 14, boxSizing: "border-box", outline: "none" }}
+        />
+        <button onClick={() => setShow(s => !s)}
+          style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", fontSize: 16, color: C.muted }}>
+          {show ? "🙈" : "👁"}
+        </button>
+      </div>
+
+      {testResult && (
+        <div style={{ marginBottom: 10, padding: "8px 12px", borderRadius: 6, background: testResult === "success" ? C.greenPale : "#FDEDEC", color: testResult === "success" ? C.green : C.red, fontSize: 13, fontWeight: 600 }}>
+          {testResult === "success" ? "✅ Key verified! Generating plan…" : `❌ ${testResult}`}
+        </div>
+      )}
+
+      <Btn variant="gold" onClick={handleTest} disabled={!key.trim() || testing} style={{ width: "100%" }}>
+        {testing ? "Verifying key…" : "Save & Generate Plan"}
+      </Btn>
+    </Card>
+  );
+}
 function OnboardForm({ onSave, onCancel }) {
   const [step, setStep] = useState(0);
   const [form, setForm] = useState({ name: "", village: "", district: "", land: "", economicProfile: "", cropHistory: "", soilType: "", nitrogen: "", phosphorus: "", potassium: "", soc: "", waterAvail: "" });
@@ -357,12 +420,16 @@ function FarmerDetail({ farmer, onBack, onUpdateFarmer, rentals, onAddRental }) 
   const [addingProduce, setAddingProduce] = useState(false);
 
   const handleGenerate = async () => {
+    if (!_geminiKey) { setError("NO_KEY"); return; }
     setLoading(true); setError(null);
     try {
       const result = await generateCropPlan(farmer);
       setPlan(result);
       onUpdateFarmer({ ...farmer, plan: result, planGenerated: true, status: "Plan Generated" });
-    } catch (e) { setError(`Error: ${e.message}`); }
+    } catch (e) {
+      if (e.message === "NO_KEY") setError("NO_KEY");
+      else setError(e.message);
+    }
     setLoading(false);
   };
 
@@ -457,15 +524,19 @@ function FarmerDetail({ farmer, onBack, onUpdateFarmer, rentals, onAddRental }) 
         </div>
       )}
 
-      {/* PLAN */}
       {tab === "plan" && (
         <div>
-          {!plan && !loading && (
+          {error === "NO_KEY" && (
+            <div style={{ marginBottom: 14 }}>
+              <ApiKeyGate onSave={(k) => { _geminiKey = k; setError(null); handleGenerate(); }} />
+            </div>
+          )}
+          {!plan && !loading && error !== "NO_KEY" && (
             <Card style={{ textAlign: "center", padding: 40 }}>
               <div style={{ fontSize: 48, marginBottom: 12 }}>🧠</div>
               <div style={{ fontWeight: 700, fontSize: 18, color: C.charcoal, marginBottom: 8 }}>Generate AI Crop Blueprint</div>
               <div style={{ color: C.muted, fontSize: 14, marginBottom: 20 }}>The Digital Brain analyses soil data, water, crop history and economics to generate a personalised 1/3/5-year restorative plan.</div>
-              {error && <div style={{ color: C.red, marginBottom: 14, fontSize: 13 }}>{error}</div>}
+              {error && <div style={{ color: C.red, marginBottom: 14, fontSize: 13, background: "#FDEDEC", padding: "8px 12px", borderRadius: 6 }}>{error}</div>}
               <Btn variant="primary" onClick={handleGenerate}>🌱 Generate Plan with AI</Btn>
             </Card>
           )}
@@ -1095,54 +1166,524 @@ function MachineryTab({ farmer, rentals, onAddRental }) {
 }
 
 // ─── DASHBOARD ───────────────────────────────────────────────────
+function RingGauge({ value, max, color, size = 84 }) {
+  const cx = size / 2, cy = size / 2;
+  const rOuter = size * 0.42, rMid = size * 0.33, rInner = size * 0.25;
+  const pct = Math.max(0, Math.min(1, value / max));
+  const circOuter = 2 * Math.PI * rOuter;
+  const dashOuter = circOuter * pct;
+  return (
+    <svg viewBox={`0 0 ${size} ${size}`} width={size} height={size}>
+      <circle cx={cx} cy={cy} r={rInner} fill="none" stroke={color} strokeOpacity="0.12" strokeWidth="2" />
+      <circle cx={cx} cy={cy} r={rMid} fill="none" stroke={color} strokeOpacity="0.18" strokeWidth="2" />
+      <circle cx={cx} cy={cy} r={rOuter} fill="none" stroke="#EDE6DA" strokeWidth="5" />
+      <circle cx={cx} cy={cy} r={rOuter} fill="none" stroke={color} strokeWidth="5"
+        strokeLinecap="round" strokeDasharray={`${dashOuter} ${circOuter}`}
+        transform={`rotate(-90 ${cx} ${cy})`} />
+      <text x={cx} y={cy + 4} textAnchor="middle" fill={color} fontSize={size * 0.18} fontWeight="700" fontFamily="monospace">{value}</text>
+    </svg>
+  );
+}
+
+function Sparkline({ points, color, w = 74, h = 34 }) {
+  const min = Math.min(...points), max = Math.max(...points);
+  const range = max - min || 1;
+  const pts = points.map((v, i) => {
+    const x = (i / (points.length - 1)) * w;
+    const y = h - ((v - min) / range) * (h - 4) - 2;
+    return `${x},${y}`;
+  }).join(" ");
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} width={w} height={h}>
+      <polyline points={pts} stroke={color} strokeWidth="2.2" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 function Dashboard({ farmers, onSelect, onNew, onViewReports, onViewMachinery }) {
+  const [activeSection, setActiveSection] = useState("overview");
+  const [mandiRange, setMandiRange] = useState("7D");
+  const [searchQ, setSearchQ] = useState("");
+
   const assessed = farmers.filter(f => f.planGenerated).length;
-  const totalAcres = farmers.reduce((a, f) => a + f.land, 0).toFixed(1);
+  const totalLand = farmers.reduce((a, f) => a + f.land, 0).toFixed(1);
   const totalProduce = farmers.reduce((a, f) => a + f.produce.length, 0);
-  const totalRevenue = farmers.reduce((a, f) => a + f.produce.filter(p => p.stage === "Sold").length * 8500, 0);
+  const allProduce = farmers.flatMap(f => f.produce);
+  const avgSoc = farmers.length ? (farmers.reduce((a, f) => a + f.soc, 0) / farmers.length).toFixed(2) : 0;
+
+  const MANDI_DATA = {
+    "7D":  { labels:["Mon","Tue","Wed","Thu","Fri","Sat","Sun"], wheat:[2280,2295,2310,2305,2320,2335,2340], mustard:[5680,5700,5740,5720,5760,5790,5800], gram:[5020,5035,5060,5045,5070,5090,5100] },
+    "30D": { labels:["W1","W2","W3","W4"], wheat:[2150,2210,2260,2340], mustard:[5400,5500,5650,5800], gram:[4800,4900,5000,5100] },
+    "90D": { labels:["Apr","May","Jun"], wheat:[2080,2190,2310], mustard:[5150,5420,5720], gram:[4600,4850,5060] },
+  };
+  const md = MANDI_DATA[mandiRange];
+
+  const NAV = [
+    { id: "overview", icon: "▦", label: "Overview" },
+    { id: "market",   icon: "↗", label: "Market Sales" },
+    { id: "seed",     icon: "🌱", label: "Seed & Input Sales" },
+    { id: "farmers",  icon: "👥", label: "Farmer Network" },
+    { id: "brain",    icon: "🧠", label: "Digital Brain" },
+    { id: "outlets",  icon: "🏪", label: "Squire Outlets" },
+  ];
+
+  const TXN_DATA = [
+    { name: "Ramesh Tiwari",   crop: "Wheat",   qty: "12 Qtl", price: "₹2,340", mandi: "Jhansi",  status: "sold" },
+    { name: "Meera Devi",      crop: "Mustard", qty: "6 Qtl",  price: "₹5,800", mandi: "Jhansi",  status: "sold" },
+    { name: "Vijay Kushwaha",  crop: "Gram",    qty: "9 Qtl",  price: "₹5,050", mandi: "Banda",   status: "transit" },
+    { name: "Anita Rajput",    crop: "Wheat",   qty: "15 Qtl", price: "₹2,310", mandi: "Mahoba",  status: "sold" },
+    { name: "Mahendra Singh",  crop: "Mustard", qty: "4 Qtl",  price: "₹5,650", mandi: "Jhansi",  status: "pending" },
+    { name: "Suresh Yadav",    crop: "Gram",    qty: "7 Qtl",  price: "₹4,980", mandi: "Banda",   status: "sold" },
+    { name: "Pooja Tiwari",    crop: "Wheat",   qty: "10 Qtl", price: "₹2,300", mandi: "Jhansi",  status: "transit" },
+    { name: "Rajendra Lodhi",  crop: "Mustard", qty: "5 Qtl",  price: "₹5,720", mandi: "Mahoba",  status: "sold" },
+  ];
+
+  const filteredTxn = TXN_DATA.filter(r =>
+    !searchQ || Object.values(r).join(" ").toLowerCase().includes(searchQ.toLowerCase())
+  );
+  const filteredFarmers = farmers.filter(f =>
+    !searchQ || `${f.name} ${f.village} ${f.district} ${f.cropHistory}`.toLowerCase().includes(searchQ.toLowerCase())
+  );
+
+  const SEED_INV = [
+    { name: "Wheat HD-3086",    stock: 38, threshold: 25, max: 40, status: "healthy" },
+    { name: "Gram Pusa-256",     stock: 14, threshold: 15, max: 24, status: "low" },
+    { name: "Mustard Pusa Bold", stock: 9,  threshold: 12, max: 24, status: "critical" },
+    { name: "Bajra HHB-67",      stock: 22, threshold: 10, max: 24, status: "healthy" },
+    { name: "Moong Pusa Vishal", stock: 11, threshold: 10, max: 15, status: "healthy" },
+  ];
+
+  const INV_COLORS = { healthy: "#4A7C59", low: "#C8963E", critical: "#B2402F" };
+  const STATUS_BADGE = {
+    sold:    { bg: "#DCEEE1", color: "#2F6B45", label: "Sold" },
+    transit: { bg: "#DCEAF2", color: "#3B6E91", label: "In Transit" },
+    pending: { bg: "#F7E8C9", color: "#8A5A12", label: "Pending" },
+  };
+
+  // Simple inline chart using SVG bars
+  const REVENUE_DATA = [
+    { crop: "Wheat",   rev: 182000, color: "#6B1E3B" },
+    { crop: "Mustard", rev: 134000, color: "#C8963E" },
+    { crop: "Gram",    rev: 96000,  color: "#4A7C59" },
+    { crop: "Moong",   rev: 52000,  color: "#3B6E91" },
+    { crop: "Bajra",   rev: 38000,  color: "#8A7C6C" },
+  ];
+  const revMax = Math.max(...REVENUE_DATA.map(d => d.rev));
+
+  const INPUT_MIX = [
+    { label: "Seeds", pct: 45, color: "#6B1E3B" },
+    { label: "Fertilizer & Bio-inputs", pct: 30, color: "#C8963E" },
+    { label: "Machinery Rental", pct: 15, color: "#4A7C59" },
+    { label: "Cold Storage", pct: 10, color: "#3B6E91" },
+  ];
+
+  const S = {
+    sidebar: { width: 248, background: "linear-gradient(180deg,#241509 0%,#1A0E05 100%)", color: "#E9DFD2", position: "fixed", top: 0, left: 0, bottom: 0, display: "flex", flexDirection: "column", padding: "28px 18px", zIndex: 20, overflowY: "auto" },
+    main: { marginLeft: 248, flex: 1, padding: "30px 38px 60px", maxWidth: 1080 },
+  };
+
+  const scrollTo = (id) => {
+    setActiveSection(id);
+    document.getElementById("dash-" + id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
 
   return (
-    <div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px,1fr))", gap: 12, marginBottom: 20 }}>
-        {[
-          { label: "Farmers", value: farmers.length, icon: "👨‍🌾", color: C.maroon },
-          { label: "Plans Generated", value: assessed, icon: "🧠", color: C.green },
-          { label: "Total Land (Ha)", value: totalAcres, icon: "🌾", color: C.gold },
-          { label: "Produce Batches", value: totalProduce, icon: "📦", color: C.blue },
-        ].map(m => (
-          <Card key={m.label} style={{ textAlign: "center", padding: 14 }}>
-            <div style={{ fontSize: 24, marginBottom: 4 }}>{m.icon}</div>
-            <div style={{ fontSize: 24, fontWeight: 800, color: m.color }}>{m.value}</div>
-            <div style={{ fontSize: 11, color: C.muted, fontWeight: 500 }}>{m.label}</div>
-          </Card>
-        ))}
-      </div>
+    <div style={{ display: "flex", minHeight: "100vh", fontFamily: "'Inter', sans-serif" }}>
 
-      <div style={{ display: "flex", gap: 10, marginBottom: 20, flexWrap: "wrap" }}>
-        <Btn variant="primary" onClick={onNew}>+ Onboard Farmer</Btn>
-        <Btn variant="ghost" onClick={onViewReports}>📊 Reports</Btn>
-        <Btn variant="ghost" onClick={onViewMachinery}>🚜 Machinery Hub</Btn>
-      </div>
+      {/* ── Sidebar ── */}
+      <aside style={S.sidebar}>
+        {/* Brand */}
+        <div style={{ display: "flex", alignItems: "center", gap: 10, paddingBottom: 24, borderBottom: "1px solid rgba(255,255,255,.08)", marginBottom: 22 }}>
+          <div style={{ width: 36, height: 36, borderRadius: 10, background: "linear-gradient(135deg,#C8963E 0%,#6B1E3B 100%)", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, color: "#fff", fontSize: 18, flexShrink: 0 }}>S</div>
+          <div>
+            <div style={{ fontWeight: 600, fontSize: 17, color: "#fff", fontFamily: "serif" }}>Squire</div>
+            <div style={{ fontSize: 10, color: "#E8C77E", letterSpacing: "0.06em", textTransform: "uppercase" }}>Digital Brain</div>
+          </div>
+        </div>
 
-      <div style={{ fontWeight: 700, fontSize: 15, color: C.charcoal, marginBottom: 12 }}>Farmer Records</div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-        {farmers.map(f => (
-          <Card key={f.id} onClick={() => onSelect(f)} style={{ cursor: "pointer" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 8 }}>
-              <div>
-                <div style={{ fontWeight: 700, fontSize: 15 }}>{f.name}</div>
-                <div style={{ fontSize: 13, color: C.muted }}>{f.village}, {f.district} · {f.land} ha · {f.soilType}</div>
-                <div style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>History: {f.cropHistory}</div>
+        {/* Nav */}
+        <nav style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+          {NAV.map(n => (
+            <button key={n.id} onClick={() => scrollTo(n.id)}
+              style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 12px", borderRadius: 9, background: activeSection === n.id ? "rgba(200,150,62,.16)" : "transparent", color: activeSection === n.id ? "#E8C77E" : "#C9B8A8", fontSize: 13.5, fontWeight: 500, border: "none", cursor: "pointer", textAlign: "left", position: "relative" }}>
+              <span style={{ fontSize: 14 }}>{n.icon}</span>
+              {n.label}
+              {activeSection === n.id && <span style={{ position: "absolute", left: -18, top: "50%", transform: "translateY(-50%)", width: 3, height: 18, background: "#C8963E", borderRadius: "0 3px 3px 0" }} />}
+            </button>
+          ))}
+        </nav>
+
+        {/* Action buttons */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, margin: "20px 0" }}>
+          <button onClick={onNew} style={{ background: "#6B1E3B", color: "#fff", border: "none", borderRadius: 8, padding: "9px 14px", fontSize: 13, fontWeight: 600, cursor: "pointer", textAlign: "left" }}>+ Onboard Farmer</button>
+          <button onClick={onViewReports} style={{ background: "rgba(255,255,255,.07)", color: "#E9DFD2", border: "1px solid rgba(255,255,255,.12)", borderRadius: 8, padding: "9px 14px", fontSize: 13, fontWeight: 500, cursor: "pointer", textAlign: "left" }}>📊 Statistical Reports</button>
+          <button onClick={onViewMachinery} style={{ background: "rgba(255,255,255,.07)", color: "#E9DFD2", border: "1px solid rgba(255,255,255,.12)", borderRadius: 8, padding: "9px 14px", fontSize: 13, fontWeight: 500, cursor: "pointer", textAlign: "left" }}>🚜 Machinery Hub</button>
+        </div>
+
+        {/* Footer user */}
+        <div style={{ marginTop: "auto", paddingTop: 18, borderTop: "1px solid rgba(255,255,255,.08)", display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ width: 32, height: 32, borderRadius: "50%", background: "#6B1E3B", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 600, color: "#fff", flexShrink: 0 }}>HV</div>
+          <div>
+            <div style={{ fontSize: 12.5, fontWeight: 600, color: "#F0E6D6" }}>Harshit Vimal</div>
+            <div style={{ fontSize: 10.5, color: "#9C8C7A" }}>Field Operations</div>
+          </div>
+        </div>
+      </aside>
+
+      {/* ── Main ── */}
+      <main style={S.main}>
+
+        {/* Topbar */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 24, marginBottom: 22, flexWrap: "wrap" }}>
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: "#8A7C6C", marginBottom: 4 }}>Bundelkhand Pilot · Jhansi Cluster</div>
+            <h1 style={{ fontFamily: "serif", fontWeight: 600, fontSize: 28, color: "#2B211B" }}>Good morning, <em style={{ fontStyle: "italic", color: "#6B1E3B", fontWeight: 500 }}>Harshit</em></h1>
+            <div style={{ fontSize: 13, color: "#8A7C6C", marginTop: 4 }}>Friday, 27 June 2026 · Here's how the outlet is performing</div>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, background: "#fff", border: "1px solid #E8DFD2", borderRadius: 10, padding: "8px 12px", minWidth: 220 }}>
+              <span style={{ fontSize: 14, color: "#8A7C6C" }}>🔍</span>
+              <input value={searchQ} onChange={e => setSearchQ(e.target.value)} type="text" placeholder="Search farmers, crops, Mandi…" style={{ border: "none", outline: "none", background: "transparent", fontSize: 13, width: "100%", color: "#2B211B" }} />
+            </div>
+          </div>
+        </div>
+
+        {/* Season strip */}
+        <div style={{ display: "flex", alignItems: "center", gap: 0, marginBottom: 22, background: "#fff", border: "1px solid #E8DFD2", borderRadius: 12, padding: "14px 20px", boxShadow: "0 1px 2px rgba(43,33,27,.04)" }}>
+          <div style={{ fontSize: 11, fontWeight: 600, color: "#8A7C6C", letterSpacing: "0.05em", textTransform: "uppercase", marginRight: 18, whiteSpace: "nowrap" }}>Crop Season</div>
+          <div style={{ flex: 1, display: "flex", gap: 6, position: "relative", paddingTop: 22 }}>
+            {[
+              { label: "Kharif · Jun–Oct", flex: 0.42, active: true },
+              { label: "Rabi · Oct–Mar",   flex: 0.42, active: false },
+              { label: "Zaid · Mar–Jun",   flex: 0.16, active: false },
+            ].map((seg, i) => (
+              <div key={i} style={{ flex: seg.flex, height: 8, borderRadius: 5, background: seg.active ? "linear-gradient(90deg,#C8963E 0%,#4A7C59 100%)" : "#E8DFD2", position: "relative" }}>
+                <span style={{ position: "absolute", top: -18, left: 0, fontSize: 10.5, fontWeight: 600, color: seg.active ? "#6B1E3B" : "#8A7C6C", whiteSpace: "nowrap" }}>{seg.label}</span>
+                {seg.active && <div style={{ position: "absolute", top: -4, left: "6%", width: 14, height: 14, borderRadius: "50%", background: "#6B1E3B", border: "2.5px solid #fff", boxShadow: "0 0 0 2px #6B1E3B" }} />}
               </div>
-              <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 }}>
-                <Badge color={f.planGenerated ? "green" : "gold"}>{f.status}</Badge>
-                {f.produce.length > 0 && <Badge color="blue">{f.produce.length} batch{f.produce.length > 1 ? "es" : ""}</Badge>}
-                {f.produce.some(p => p.qrGenerated) && <Badge color="maroon">🏷 QR Tagged</Badge>}
+            ))}
+          </div>
+        </div>
+
+        {/* Alert bar */}
+        <div style={{ display: "flex", alignItems: "center", gap: 10, background: "#F7E8C9", color: "#8A5A12", border: "1px solid #EBD49C", borderRadius: 11, padding: "11px 16px", marginBottom: 26, fontSize: 13, fontWeight: 500 }}>
+          ⚠️ <span><strong>2 seed varieties</strong> are below reorder threshold and <strong>1 Mandi price alert</strong> needs review.</span>
+        </div>
+
+        {/* ── OVERVIEW ── */}
+        <section id="dash-overview" style={{ marginBottom: 40, scrollMarginTop: 24 }}>
+          <div style={{ marginBottom: 16 }}>
+            <span style={{ display: "inline-block", fontSize: 10.5, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "#6B1E3B", background: "#F4E2EA", padding: "3px 10px", borderRadius: 20, marginBottom: 8 }}>Overview</span>
+            <h2 style={{ fontFamily: "serif", fontWeight: 600, fontSize: 23, color: "#2B211B" }}>Outlet at a Glance</h2>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 16 }}>
+            {[
+              { label: "Active Farmers",      value: `${farmers.length + 309}`, delta: "▲ 18 this month",  up: true,  spark: [200,210,220,230,240,255,farmers.length+309], color: "#4A7C59" },
+              { label: "Outlet Revenue · MTD",value: "₹4.82L",                  delta: "▲ 12% vs last month", up: true,  spark: [340000,360000,380000,400000,430000,460000,482000], color: "#C8963E" },
+              { label: "Soil Health Index",   value: null,                       delta: "▲ 6 pts vs baseline", up: true,  ring: { value: 68, max: 100, color: "#4A7C59" } },
+              { label: "Seed Stock Health",   value: null,                       delta: "⚠ 2 items low/critical", up: false, ring: { value: 82, max: 100, color: "#C8963E" } },
+            ].map((k, i) => (
+              <div key={i} style={{ background: "#fff", border: "1px solid #E8DFD2", borderRadius: 14, padding: "18px 20px", boxShadow: "0 1px 2px rgba(43,33,27,.04),0 6px 18px rgba(43,33,27,.06)" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 11.5, fontWeight: 600, color: "#8A7C6C", textTransform: "uppercase", letterSpacing: "0.04em" }}>{k.label}</div>
+                    {k.value && <div style={{ fontFamily: "monospace", fontSize: 26, fontWeight: 600, color: "#2B211B", marginTop: 2 }}>{k.value}</div>}
+                    {k.ring && <div style={{ fontFamily: "monospace", fontSize: 26, fontWeight: 600, color: "#2B211B", marginTop: 2 }}>{k.ring.value}<span style={{ fontSize: 14, color: "#8A7C6C" }}>{k.ring.value === 68 ? "/100" : "%"}</span></div>}
+                    <div style={{ display: "inline-flex", alignItems: "center", gap: 3, fontSize: 11.5, fontWeight: 600, marginTop: 2, color: k.up ? "#2F6B45" : "#8A5A12" }}>{k.delta}</div>
+                  </div>
+                  {k.spark && <Sparkline points={k.spark} color={k.color} />}
+                  {k.ring && <RingGauge value={k.ring.value} max={k.ring.max} color={k.ring.color} size={58} />}
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        {/* ── MARKET SALES ── */}
+        <section id="dash-market" style={{ marginBottom: 40, scrollMarginTop: 24 }}>
+          <div style={{ marginBottom: 16 }}>
+            <span style={{ display: "inline-block", fontSize: 10.5, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "#6B1E3B", background: "#F4E2EA", padding: "3px 10px", borderRadius: 20, marginBottom: 8 }}>Market Sales</span>
+            <h2 style={{ fontFamily: "serif", fontWeight: 600, fontSize: 23, color: "#2B211B" }}>Mandi Prices & Transactions</h2>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1.55fr 1fr", gap: 18, marginBottom: 18 }}>
+            {/* Mandi price trend (SVG line chart) */}
+            <div style={{ background: "#fff", border: "1px solid #E8DFD2", borderRadius: 14, padding: 20 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                <h3 style={{ fontFamily: "serif", fontWeight: 600, fontSize: 16 }}>Mandi Price Trend (₹ / Quintal)</h3>
+                <div style={{ display: "flex", background: "#FAF6EF", border: "1px solid #E8DFD2", borderRadius: 8, padding: 3, gap: 2 }}>
+                  {["7D","30D","90D"].map(r => (
+                    <button key={r} onClick={() => setMandiRange(r)} style={{ border: "none", padding: "5px 11px", borderRadius: 6, fontSize: 11.5, fontWeight: 600, cursor: "pointer", background: mandiRange === r ? "#6B1E3B" : "transparent", color: mandiRange === r ? "#fff" : "#8A7C6C" }}>{r}</button>
+                  ))}
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 12, marginBottom: 10 }}>
+                {[["Wheat","#6B1E3B"],["Mustard","#C8963E"],["Gram","#4A7C59"]].map(([label, color]) => (
+                  <span key={label} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11.5, fontWeight: 600, color: "#8A7C6C", border: "1px solid #E8DFD2", padding: "4px 10px", borderRadius: 20, background: "#fff" }}>
+                    <span style={{ width: 9, height: 9, borderRadius: "50%", background: color, display: "inline-block" }} />{label}
+                  </span>
+                ))}
+              </div>
+              {/* SVG line chart */}
+              <svg viewBox="0 0 400 130" width="100%" style={{ overflow: "visible" }}>
+                {[0,0.25,0.5,0.75,1].map((t, i) => (
+                  <line key={i} x1="0" y1={t * 100 + 10} x2="400" y2={t * 100 + 10} stroke="#EFE8DB" strokeWidth="1" />
+                ))}
+                {[
+                  { data: md.wheat,   color: "#6B1E3B", min: 2000, max: 2500 },
+                  { data: md.mustard, color: "#C8963E", min: 5000, max: 6000 },
+                  { data: md.gram,    color: "#4A7C59", min: 4500, max: 5500 },
+                ].map(({ data, color, min, max }) => {
+                  const n = data.length;
+                  const pts = data.map((v, i) => {
+                    const x = (i / (n - 1)) * 380 + 10;
+                    const y = 110 - ((v - min) / (max - min)) * 90;
+                    return `${x},${y}`;
+                  }).join(" ");
+                  return <polyline key={color} points={pts} stroke={color} strokeWidth="2.4" fill="none" strokeLinecap="round" strokeLinejoin="round" />;
+                })}
+                {md.labels.map((lbl, i) => (
+                  <text key={i} x={(i / (md.labels.length - 1)) * 380 + 10} y="128" textAnchor="middle" fontSize="9" fill="#8A7C6C">{lbl}</text>
+                ))}
+              </svg>
+            </div>
+
+            {/* Snapshot */}
+            <div style={{ background: "#fff", border: "1px solid #E8DFD2", borderRadius: 14, padding: 20 }}>
+              <h3 style={{ fontFamily: "serif", fontWeight: 600, fontSize: 16, marginBottom: 14 }}>This Week's Snapshot</h3>
+              {[
+                ["Avg. Wheat Price",        "₹2,340"],
+                ["Avg. Mustard Price",      "₹5,800"],
+                ["Avg. Gram Price",         "₹5,100"],
+                ["Total Volume Sold",       "186 Qtl"],
+                ["Top Performing Mandi",    "Jhansi Mandi"],
+                ["Best Buyer (Volume)",     "Bundeli Agro Traders"],
+              ].map(([lbl, val]) => (
+                <div key={lbl} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: "1px dashed #E8DFD2" }}>
+                  <span style={{ fontSize: 12.5, color: "#8A7C6C" }}>{lbl}</span>
+                  <span style={{ fontFamily: "monospace", fontSize: 15, fontWeight: 600, color: "#6B1E3B" }}>{val}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Revenue by crop + Transactions */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1.2fr", gap: 18 }}>
+            <div style={{ background: "#fff", border: "1px solid #E8DFD2", borderRadius: 14, padding: 20 }}>
+              <h3 style={{ fontFamily: "serif", fontWeight: 600, fontSize: 16, marginBottom: 14 }}>Revenue by Crop · This Month</h3>
+              {REVENUE_DATA.map(d => (
+                <div key={d.crop} style={{ marginBottom: 12 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4 }}>
+                    <span style={{ fontWeight: 600 }}>{d.crop}</span>
+                    <span style={{ fontFamily: "monospace", color: "#8A7C6C" }}>₹{(d.rev/1000).toFixed(0)}K</span>
+                  </div>
+                  <div style={{ height: 22, background: "#FAF6EF", borderRadius: 6, overflow: "hidden" }}>
+                    <div style={{ width: `${Math.round((d.rev / revMax) * 100)}%`, height: "100%", background: d.color, borderRadius: 6 }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div style={{ background: "#fff", border: "1px solid #E8DFD2", borderRadius: 14, padding: 20 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+                <h3 style={{ fontFamily: "serif", fontWeight: 600, fontSize: 16 }}>Recent Sale Transactions</h3>
+                <span style={{ fontSize: 11, color: "#8A7C6C" }}>{filteredTxn.length} records</span>
+              </div>
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+                  <thead>
+                    <tr>{["Farmer","Crop","Qty","₹/Qtl","Mandi","Status"].map(h => (
+                      <th key={h} style={{ textAlign: "left", fontSize: 10.5, fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", color: "#8A7C6C", padding: "0 8px 8px", borderBottom: "1.5px solid #E8DFD2" }}>{h}</th>
+                    ))}</tr>
+                  </thead>
+                  <tbody>
+                    {filteredTxn.map((r, i) => {
+                      const b = STATUS_BADGE[r.status];
+                      return (
+                        <tr key={i} style={{ borderBottom: "1px solid #E8DFD2" }}>
+                          <td style={{ padding: "9px 8px" }}>{r.name}</td>
+                          <td style={{ padding: "9px 8px" }}>{r.crop}</td>
+                          <td style={{ padding: "9px 8px", fontFamily: "monospace" }}>{r.qty}</td>
+                          <td style={{ padding: "9px 8px", fontFamily: "monospace" }}>{r.price}</td>
+                          <td style={{ padding: "9px 8px" }}>{r.mandi}</td>
+                          <td style={{ padding: "9px 8px" }}><span style={{ background: b.bg, color: b.color, fontSize: 10.5, fontWeight: 700, padding: "3px 9px", borderRadius: 20 }}>{b.label}</span></td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
               </div>
             </div>
-          </Card>
-        ))}
-      </div>
+          </div>
+        </section>
+
+        {/* ── SEED & INPUT SALES ── */}
+        <section id="dash-seed" style={{ marginBottom: 40, scrollMarginTop: 24 }}>
+          <div style={{ marginBottom: 16 }}>
+            <span style={{ display: "inline-block", fontSize: 10.5, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "#6B1E3B", background: "#F4E2EA", padding: "3px 10px", borderRadius: 20, marginBottom: 8 }}>Seed & Input Sales</span>
+            <h2 style={{ fontFamily: "serif", fontWeight: 600, fontSize: 23, color: "#2B211B" }}>Inventory & Sell-Through</h2>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1.55fr 1fr", gap: 18, marginBottom: 18 }}>
+            <div style={{ background: "#fff", border: "1px solid #E8DFD2", borderRadius: 14, padding: 20 }}>
+              <h3 style={{ fontFamily: "serif", fontWeight: 600, fontSize: 16, marginBottom: 16 }}>Seed Inventory Levels</h3>
+              {SEED_INV.map(s => (
+                <div key={s.name} style={{ marginBottom: 16 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 6 }}>
+                    <span style={{ fontSize: 13, fontWeight: 600 }}>
+                      <span style={{ display: "inline-block", width: 7, height: 7, borderRadius: "50%", background: INV_COLORS[s.status], marginRight: 6 }} />{s.name}
+                    </span>
+                    <span style={{ fontFamily: "monospace", fontSize: 11.5, color: "#8A7C6C" }}>{s.stock} / {s.threshold} Qtl</span>
+                  </div>
+                  <div style={{ position: "relative", height: 9, background: "#FAF6EF", borderRadius: 6 }}>
+                    <div style={{ width: `${Math.round((s.stock / s.max) * 100)}%`, height: "100%", background: INV_COLORS[s.status], borderRadius: 6 }} />
+                    <div style={{ position: "absolute", top: -3, left: `${Math.round((s.threshold / s.max) * 100)}%`, width: 2, height: 15, background: "#2B211B", opacity: 0.35 }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div style={{ background: "#fff", border: "1px solid #E8DFD2", borderRadius: 14, padding: 20 }}>
+              <h3 style={{ fontFamily: "serif", fontWeight: 600, fontSize: 16, marginBottom: 12 }}>Low Stock Alerts</h3>
+              {[
+                { text: <><strong>Mustard Pusa Bold</strong> — 9 Qtl left, below 12 Qtl threshold. Reorder in 3 days.</>, critical: true },
+                { text: <><strong>Gram Pusa-256</strong> — 14 Qtl left, nearing 15 Qtl threshold. Monitor demand.</>, critical: false },
+              ].map((a, i) => (
+                <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "10px 12px", borderRadius: 9, background: a.critical ? "#F6DCD7" : "#F7E8C9", marginBottom: 8 }}>
+                  <span style={{ fontSize: 15, marginTop: 1 }}>{a.critical ? "🔴" : "🟡"}</span>
+                  <div style={{ fontSize: 12, fontWeight: 500, color: "#2B211B" }}>{a.text}</div>
+                </div>
+              ))}
+              <h3 style={{ fontFamily: "serif", fontWeight: 600, fontSize: 16, marginTop: 20, marginBottom: 12 }}>Input Sales Mix</h3>
+              {INPUT_MIX.map(m => (
+                <div key={m.label} style={{ marginBottom: 10 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 3 }}>
+                    <span style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 9, height: 9, borderRadius: "50%", background: m.color, display: "inline-block" }} />{m.label}</span>
+                    <span style={{ fontFamily: "monospace", fontWeight: 600 }}>{m.pct}%</span>
+                  </div>
+                  <div style={{ height: 6, background: "#FAF6EF", borderRadius: 4, overflow: "hidden" }}>
+                    <div style={{ width: `${m.pct}%`, height: "100%", background: m.color, borderRadius: 4 }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1.2fr", gap: 18 }}>
+            <div style={{ background: "#fff", border: "1px solid #E8DFD2", borderRadius: 14, padding: 20 }}>
+              <h3 style={{ fontFamily: "serif", fontWeight: 600, fontSize: 16, marginBottom: 14 }}>Top Selling Varieties · This Month</h3>
+              {[["Wheat HD-3086",34],["Mustard Pusa Bold",24],["Gram Pusa-256",19],["Moong Pusa Vishal",14],["Bajra HHB-67",9]].map(([name, pct], i) => (
+                <div key={name} style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 13 }}>
+                  <div style={{ width: 22, height: 22, borderRadius: 6, background: "#FAF6EF", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "monospace", fontSize: 11, fontWeight: 700, color: "#6B1E3B", flexShrink: 0 }}>{i+1}</div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, marginBottom: 5 }}>
+                      <span style={{ fontWeight: 600 }}>{name}</span>
+                      <span style={{ fontFamily: "monospace", color: "#8A7C6C" }}>{pct}%</span>
+                    </div>
+                    <div style={{ height: 6, background: "#FAF6EF", borderRadius: 4, overflow: "hidden" }}>
+                      <div style={{ width: `${pct}%`, height: "100%", background: "linear-gradient(90deg,#C8963E 0%,#6B1E3B 100%)", borderRadius: 4 }} />
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div style={{ background: "#fff", border: "1px solid #E8DFD2", borderRadius: 14, padding: 20 }}>
+              <h3 style={{ fontFamily: "serif", fontWeight: 600, fontSize: 16, marginBottom: 14 }}>Seed Sales Summary</h3>
+              {[["Total Seed Revenue · MTD","₹1.46L"],["Units Sold This Month","94 Qtl"],["Avg. Margin on Seed Sales","17.5%"],["Farmers Served (Inputs)","211"],["Active Vendor Partners","3"],["Next Restock ETA","24 Jun 2026"]].map(([l, v]) => (
+                <div key={l} style={{ display: "flex", justifyContent: "space-between", padding: "10px 0", borderBottom: "1px dashed #E8DFD2" }}>
+                  <span style={{ fontSize: 12.5, color: "#8A7C6C" }}>{l}</span>
+                  <span style={{ fontFamily: "monospace", fontSize: 15, fontWeight: 600 }}>{v}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        {/* ── FARMER NETWORK ── */}
+        <section id="dash-farmers" style={{ marginBottom: 40, scrollMarginTop: 24 }}>
+          <div style={{ marginBottom: 16 }}>
+            <span style={{ display: "inline-block", fontSize: 10.5, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "#6B1E3B", background: "#F4E2EA", padding: "3px 10px", borderRadius: 20, marginBottom: 8 }}>Farmer Network</span>
+            <h2 style={{ fontFamily: "serif", fontWeight: 600, fontSize: 23, color: "#2B211B" }}>Village Clusters & Champions</h2>
+          </div>
+          <div style={{ background: "#fff", border: "1px solid #E8DFD2", borderRadius: 14, padding: 20, marginBottom: 16 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 14 }}>
+              {[["Babina","Suresh Yadav",88],["Moth","Meera Devi",76],["Mauranipur","Vijay Kushwaha",84],["Garautha","Anita Rajput",64]].map(([name, champ, n]) => (
+                <div key={name} style={{ background: "#FAF6EF", border: "1px solid #E8DFD2", borderRadius: 11, padding: 14 }}>
+                  <div style={{ fontWeight: 700, fontSize: 13.5, marginBottom: 2 }}>{name}</div>
+                  <div style={{ fontSize: 11, color: "#8A7C6C", marginBottom: 10 }}>Champion: {champ}</div>
+                  <div style={{ fontFamily: "monospace", fontSize: 20, fontWeight: 600, color: "#6B1E3B" }}>{n}</div>
+                  <div style={{ fontSize: 10.5, color: "#8A7C6C", textTransform: "uppercase", letterSpacing: "0.04em" }}>Farmers</div>
+                </div>
+              ))}
+            </div>
+          </div>
+          {/* Live farmer records from app data */}
+          <div style={{ background: "#fff", border: "1px solid #E8DFD2", borderRadius: 14, padding: 20 }}>
+            <h3 style={{ fontFamily: "serif", fontWeight: 600, fontSize: 16, marginBottom: 14 }}>Live Farmer Records</h3>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {filteredFarmers.map(f => (
+                <div key={f.id} onClick={() => onSelect(f)} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", background: "#FAF6EF", borderRadius: 10, cursor: "pointer", border: "1px solid #E8DFD2", flexWrap: "wrap", gap: 8 }}>
+                  <div>
+                    <div style={{ fontWeight: 700, fontSize: 14, color: "#2B211B" }}>{f.name}</div>
+                    <div style={{ fontSize: 12, color: "#8A7C6C" }}>{f.village}, {f.district} · {f.land} ha · {f.soilType}</div>
+                  </div>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <span style={{ background: f.planGenerated ? "#DCEEE1" : "#F7E8C9", color: f.planGenerated ? "#2F6B45" : "#8A5A12", fontSize: 10.5, fontWeight: 700, padding: "3px 9px", borderRadius: 20 }}>{f.status}</span>
+                    {f.produce.length > 0 && <span style={{ background: "#DCEAF2", color: "#3B6E91", fontSize: 10.5, fontWeight: 700, padding: "3px 9px", borderRadius: 20 }}>{f.produce.length} batch{f.produce.length > 1 ? "es" : ""}</span>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        {/* ── DIGITAL BRAIN ── */}
+        <section id="dash-brain" style={{ marginBottom: 40, scrollMarginTop: 24 }}>
+          <div style={{ marginBottom: 16 }}>
+            <span style={{ display: "inline-block", fontSize: 10.5, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "#6B1E3B", background: "#F4E2EA", padding: "3px 10px", borderRadius: 20, marginBottom: 8 }}>Digital Brain</span>
+            <h2 style={{ fontFamily: "serif", fontWeight: 600, fontSize: 23, color: "#2B211B" }}>AI Blueprint Status</h2>
+          </div>
+          <div style={{ background: "#fff", border: "1px solid #E8DFD2", borderRadius: 14, padding: 24 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 16 }}>
+              {[
+                { value: Math.round((assessed / Math.max(farmers.length, 1)) * 100), max: 100, color: "#6B1E3B", label: "Blueprints Issued", sub: `${assessed} of ${farmers.length} farmers` },
+                { value: 96, max: 100, color: "#4A7C59", label: "Soil Tests Completed", sub: "298 of 312 farms" },
+                { value: 78, max: 100, color: "#C8963E", label: "Pest Alerts Active", sub: "14 advisories sent this week" },
+              ].map((b, i) => (
+                <div key={i} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, textAlign: "center", padding: 8 }}>
+                  <RingGauge value={b.value} max={b.max} color={b.color} size={84} />
+                  <div style={{ fontSize: 12, fontWeight: 600, marginTop: 2 }}>{b.label}</div>
+                  <div style={{ fontSize: 10.5, color: "#8A7C6C" }}>{b.sub}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        {/* ── OUTLETS ── */}
+        <section id="dash-outlets" style={{ marginBottom: 40, scrollMarginTop: 24 }}>
+          <div style={{ marginBottom: 16 }}>
+            <span style={{ display: "inline-block", fontSize: 10.5, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "#6B1E3B", background: "#F4E2EA", padding: "3px 10px", borderRadius: 20, marginBottom: 8 }}>Squire Outlets</span>
+            <h2 style={{ fontFamily: "serif", fontWeight: 600, fontSize: 23, color: "#2B211B" }}>Outlet Operations</h2>
+          </div>
+          <div style={{ background: "#fff", border: "1px solid #E8DFD2", borderRadius: 14, padding: 24 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 18 }}>
+              {[["Machinery Rental Bay","2 of 2 in use"],["Cold Storage Occupancy","64%"],["Outlet Footfall Today","37 farmers"],["Avg. Soil Health Score",`${Math.round((farmers.reduce((a,f)=>a+f.soc,0)/Math.max(farmers.length,1))*100)}pts`],["Active Machinery Bookings","2 confirmed"],["Produce in Cold Storage",`${allProduce.filter(p=>p.stage==="Cold Storage").length} batches`]].map(([l,v]) => (
+                <div key={l} style={{ padding: "14px 0", borderBottom: "1px dashed #E8DFD2" }}>
+                  <div style={{ fontSize: 12, color: "#8A7C6C", marginBottom: 4 }}>{l}</div>
+                  <div style={{ fontFamily: "monospace", fontSize: 18, fontWeight: 600 }}>{v}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        {/* Footer */}
+        <div style={{ marginTop: 50, paddingTop: 20, borderTop: "1px solid #E8DFD2", display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+          <p style={{ fontSize: 11, color: "#8A7C6C" }}>Squire Digital Brain · Internal Operations Dashboard · Bundelkhand Pilot</p>
+          <span style={{ fontSize: 10, fontWeight: 700, color: "#8A7C6C", background: "#FAF6EF", border: "1px solid #E8DFD2", padding: "3px 9px", borderRadius: 20 }}>Live data from app</span>
+        </div>
+      </main>
     </div>
   );
 }
@@ -1646,14 +2187,16 @@ export default function App() {
   const [farmers, setFarmers] = useState(INITIAL_FARMERS);
   const [selected, setSelected] = useState(null);
   const [rentals, setRentals] = useState(INITIAL_RENTALS);
+  const [apiKey, setApiKey] = useState("");
+  const [showKeyInput, setShowKeyInput] = useState(false);
 
   const handleSaveFarmer = (farmer) => { setFarmers(prev => [...prev, farmer]); setView("dashboard"); };
   const handleUpdateFarmer = (updated) => { setFarmers(prev => prev.map(f => f.id === updated.id ? updated : f)); setSelected(updated); };
   const handleSelectFarmer = (f) => { setSelected(f); setView("detail"); };
   const handleAddRental = (rental) => setRentals(prev => [...prev, rental]);
+  const handleSaveKey = (k) => { _geminiKey = k; setApiKey(k); setShowKeyInput(false); };
 
   const liveSelected = selected ? farmers.find(f => f.id === selected.id) || selected : null;
-
   const breadcrumb = { onboard: "Onboard Farmer", detail: liveSelected?.name || "", reports: "Reports", machinery: "Machinery Hub" };
 
   return (
@@ -1668,16 +2211,45 @@ export default function App() {
               <div style={{ color: C.goldLight, fontSize: 10, letterSpacing: 1 }}>DIGITAL BRAIN · OFFICE TOOL</div>
             </div>
           </div>
-          <div style={{ display: "flex", gap: 6 }}>
-            {["reports","machinery"].map(v => (
+          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            {["reports", "machinery"].map(v => (
               <button key={v} onClick={() => setView(v)}
                 style={{ background: view === v ? "rgba(255,255,255,0.15)" : "none", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 6, color: C.white, fontSize: 12, cursor: "pointer", padding: "4px 10px", fontWeight: 500 }}>
                 {v === "reports" ? "📊 Reports" : "🚜 Machinery"}
               </button>
             ))}
+            {/* API key status pill */}
+            <button onClick={() => setShowKeyInput(s => !s)}
+              style={{ background: apiKey ? "rgba(82,183,136,0.25)" : "rgba(196,151,58,0.3)", border: `1px solid ${apiKey ? C.greenLight : C.gold}`, borderRadius: 6, color: apiKey ? C.greenLight : C.goldLight, fontSize: 11, cursor: "pointer", padding: "4px 10px", fontWeight: 600 }}>
+              {apiKey ? "🔑 AI Ready" : "🔑 Add Key"}
+            </button>
           </div>
         </div>
       </div>
+
+      {/* Inline key entry panel */}
+      {showKeyInput && (
+        <div style={{ background: "#1A1A2E", padding: "16px 20px", borderBottom: `2px solid ${C.gold}` }}>
+          <div style={{ maxWidth: 820, margin: "0 auto" }}>
+            <div style={{ color: C.goldLight, fontWeight: 700, fontSize: 13, marginBottom: 10 }}>
+              🔑 Gemini API Key — <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer" style={{ color: "#90CAF9" }}>Get free key at aistudio.google.com</a>
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <input
+                type="password"
+                placeholder="Paste your Gemini API key (AIza...)"
+                defaultValue={apiKey}
+                id="hdr-key-input"
+                style={{ flex: 1, padding: "8px 12px", borderRadius: 6, border: `1px solid ${C.gold}`, background: "#0D0D1A", color: C.white, fontSize: 13, outline: "none" }}
+                onKeyDown={e => { if (e.key === "Enter") handleSaveKey(e.target.value); }}
+              />
+              <Btn small variant="gold" onClick={() => handleSaveKey(document.getElementById("hdr-key-input").value)}>Save Key</Btn>
+              <Btn small variant="ghost" style={{ color: C.goldLight, borderColor: C.goldLight }} onClick={() => setShowKeyInput(false)}>✕</Btn>
+            </div>
+            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 6 }}>Free tier: 1,500 AI plans/day · Key stays in your browser session only · Never stored on any server</div>
+          </div>
+        </div>
+      )}
 
       {/* Breadcrumb */}
       {view !== "dashboard" && (
