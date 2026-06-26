@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import Chart from "chart.js/auto";
 
 // ─── BRAND TOKENS ────────────────────────────────────────────────
 const C = {
@@ -149,7 +150,6 @@ function StepBar({ current, steps }) {
 
 // ─── QR CODE COMPONENT ──────────────────────────────────────────
 function QRDisplay({ data, size = 120 }) {
-  // SVG-based QR-style visual (deterministic pattern from data string)
   const hash = data.split("").reduce((a, c) => ((a << 5) - a + c.charCodeAt(0)) | 0, 0);
   const cells = 11;
   const grid = [];
@@ -167,7 +167,6 @@ function QRDisplay({ data, size = 120 }) {
       {grid.map(({ r, c: c2, on }, i) =>
         on ? <rect key={i} x={c2 * cell} y={r * cell} width={cell - 0.5} height={cell - 0.5} fill={C.charcoal} /> : null
       )}
-      {/* Corner markers */}
       {[[0,0],[0,cells-3],[cells-3,0]].map(([ry,cx], i) => (
         <g key={i}>
           <rect x={cx*cell} y={ry*cell} width={3*cell} height={3*cell} fill={C.charcoal} rx={2}/>
@@ -210,11 +209,6 @@ function QRCard({ produce, farmer }) {
   );
 }
 
-// ─── GEMINI API KEY STORE (session only) ─────────────────────────
-let _geminiKey = "";
-export function setGeminiKey(k) { _geminiKey = k.trim(); }
-export function getGeminiKey() { return _geminiKey; }
-
 // ─── AI CROP PLAN — Secure Serverless Proxy Call ───────────────────
 async function generateCropPlan(farmer) {
   const prompt = `You are Squire Digital Brain — an AI agricultural planning system for restorative farming in semi-arid India (Bundelkhand/Central UP).
@@ -235,7 +229,6 @@ Return ONLY a single compact JSON object. No markdown. No text before or after. 
 Replace ALL values to match this farmer's data. Same keys, same structure. Strings under 60 chars.`;
 
   try {
-    // Calling YOUR secure backend (api/gemini.js), NOT Google directly
     const res = await fetch("/api/gemini", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -253,84 +246,8 @@ Replace ALL values to match this farmer's data. Same keys, same structure. Strin
     throw new Error(`Failed to generate plan: ${err.message}`);
   }
 }
-// ─── API KEY GATE ─────────────────────────────────────────────────
-function ApiKeyGate({ onSave }) {
-  const [key, setKey] = useState("");
-  const [show, setShow] = useState(false);
-  const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState(null);
 
-  const handleTest = async () => {
-    if (!key.trim()) return;
-    setTesting(true); setTestResult(null);
-    _geminiKey = key.trim();
-    try {
-      const res = await fetch(
-  `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key.trim()}`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ contents: [{ parts: [{ text: "Reply with the word OK only." }] }], generationConfig: { maxOutputTokens: 5 } }),
-        }
-      );
-      if (res.ok) {
-        setTestResult("success");
-        setTimeout(() => { onSave(key.trim()); }, 800);
-      } else {
-        const d = await res.json();
-        setTestResult(`fail: ${d.error?.message || res.status}`);
-        _geminiKey = "";
-      }
-    } catch (e) {
-      setTestResult(`fail: ${e.message}`);
-      _geminiKey = "";
-    }
-    setTesting(false);
-  };
-
-  return (
-    <Card style={{ border: `2px solid ${C.gold}`, background: "#FFFBF0" }}>
-      <div style={{ display: "flex", gap: 10, alignItems: "flex-start", marginBottom: 14 }}>
-        <div style={{ fontSize: 32 }}>🔑</div>
-        <div>
-          <div style={{ fontWeight: 700, fontSize: 15, color: C.charcoal }}>Gemini API Key Required</div>
-          <div style={{ fontSize: 13, color: C.muted, marginTop: 2 }}>Free — 1,500 plans/day, no credit card</div>
-        </div>
-      </div>
-
-      <div style={{ background: C.cream, borderRadius: 8, padding: "10px 14px", marginBottom: 14, fontSize: 13, color: C.charcoal, lineHeight: 1.8 }}>
-        <strong>Get your free key in 60 seconds:</strong><br />
-        1. Open <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer" style={{ color: C.blue, fontWeight: 600 }}>aistudio.google.com/app/apikey</a><br />
-        2. Sign in with Google → click <strong>"Create API Key"</strong><br />
-        3. Copy and paste it below
-      </div>
-
-      <div style={{ position: "relative", marginBottom: 10 }}>
-        <input
-          type={show ? "text" : "password"}
-          value={key}
-          onChange={e => setKey(e.target.value)}
-          placeholder="AIza..."
-          style={{ width: "100%", padding: "10px 44px 10px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 14, boxSizing: "border-box", outline: "none" }}
-        />
-        <button onClick={() => setShow(s => !s)}
-          style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", fontSize: 16, color: C.muted }}>
-          {show ? "🙈" : "👁"}
-        </button>
-      </div>
-
-      {testResult && (
-        <div style={{ marginBottom: 10, padding: "8px 12px", borderRadius: 6, background: testResult === "success" ? C.greenPale : "#FDEDEC", color: testResult === "success" ? C.green : C.red, fontSize: 13, fontWeight: 600 }}>
-          {testResult === "success" ? "✅ Key verified! Generating plan…" : `❌ ${testResult}`}
-        </div>
-      )}
-
-      <Btn variant="gold" onClick={handleTest} disabled={!key.trim() || testing} style={{ width: "100%" }}>
-        {testing ? "Verifying key…" : "Save & Generate Plan"}
-      </Btn>
-    </Card>
-  );
-}
+// ─── ONBOARD FORM ───────────────────────────────────────────────
 function OnboardForm({ onSave, onCancel }) {
   const [step, setStep] = useState(0);
   const [form, setForm] = useState({ name: "", village: "", district: "", land: "", economicProfile: "", cropHistory: "", soilType: "", nitrogen: "", phosphorus: "", potassium: "", soc: "", waterAvail: "" });
@@ -395,7 +312,7 @@ function FarmerDetail({ farmer, onBack, onUpdateFarmer, rentals, onAddRental }) 
   const [newProduce, setNewProduce] = useState({ crop: "", qty: "", stage: "", buyer: "", harvestDate: "" });
   const [addingProduce, setAddingProduce] = useState(false);
 
-const handleGenerate = async () => {
+  const handleGenerate = async () => {
     setLoading(true); 
     setError(null);
     try {
@@ -407,8 +324,8 @@ const handleGenerate = async () => {
     }
     setLoading(false);
   };
-  const handleAddProduce = () => {
 
+  const handleAddProduce = () => {
     if (!newProduce.crop || !newProduce.qty || !newProduce.stage) return;
     const entry = { id: "P" + Date.now(), ...newProduce, qrGenerated: true };
     onUpdateFarmer({ ...farmer, produce: [...farmer.produce, entry] });
@@ -419,11 +336,8 @@ const handleGenerate = async () => {
   const farmerRentals = rentals.filter(r => r.farmerId === farmer.id);
 
   // ── Live Economics Calculations ─────────────────────────────
-  // Input costs: parse cost strings from AI plan, multiply by land
   const inputItems = (plan?.inputShoppingList || []).map(item => {
     const rawCost = parseFloat(String(item.cost).replace(/[^0-9.]/g, "")) || 0;
-    const qtyNum = parseFloat(String(item.qty).replace(/[^0-9.]/g, "")) || 1;
-    // If cost is per-acre, scale by land; otherwise flat
     const isPerAcre = String(item.qty).toLowerCase().includes("acre");
     const landAcres = farmer.land * 2.47;
     const totalItemCost = isPerAcre ? Math.round(rawCost * landAcres) : rawCost;
@@ -431,7 +345,6 @@ const handleGenerate = async () => {
   });
   const totalInputCost = inputItems.reduce((a, i) => a + i.totalCost, 0);
 
-  // Produce revenue: qty (kg) × mandi price per kg
   const MANDI_PER_KG = { "Wheat": 22.75, "Paddy": 23.0, "Mustard": 56.5, "Gram": 54.4, "Arhar (Pigeon Pea)": 70.0, "Lentil": 60.0, "Sunflower": 67.6, "Sesame": 90.0, "Soybean": 46.0, "Maize": 20.9, "Moong": 72.0 };
   const produceItems = farmer.produce.map(p => {
     const pricePerKg = MANDI_PER_KG[p.crop] || 30;
@@ -445,11 +358,9 @@ const handleGenerate = async () => {
   const totalCommission = produceItems.reduce((a, p) => a + p.commission, 0);
   const totalNetRevenue = produceItems.reduce((a, p) => a + p.netRevenue, 0);
 
-  // Machinery costs
   const machineryRentalCost = farmerRentals.reduce((a, r) => a + r.totalCost, 0);
   const machineryPending = farmerRentals.filter(r => r.status === "Confirmed").reduce((a, r) => a + r.totalCost, 0);
 
-  // P&L
   const totalCosts = totalInputCost + machineryRentalCost;
   const netPL = totalNetRevenue - totalCosts;
   const restorativePremium = Math.round(totalNetRevenue * 0.18);
@@ -476,7 +387,6 @@ const handleGenerate = async () => {
         ))}
       </div>
 
-      {/* SOIL */}
       {tab === "soil" && (
         <div>
           <Card style={{ marginBottom: 14 }}>
@@ -500,7 +410,7 @@ const handleGenerate = async () => {
 
       {tab === "plan" && (
         <div>
-          {!plan && !loading && error !== "NO_KEY" && (
+          {!plan && !loading && (
             <Card style={{ textAlign: "center", padding: 40 }}>
               <div style={{ fontSize: 48, marginBottom: 12 }}>🧠</div>
               <div style={{ fontWeight: 700, fontSize: 18, color: C.charcoal, marginBottom: 8 }}>Generate AI Crop Blueprint</div>
@@ -590,7 +500,6 @@ const handleGenerate = async () => {
         </div>
       )}
 
-      {/* INPUTS */}
       {tab === "inputs" && (
         <div>
           {!plan ? (
@@ -600,7 +509,6 @@ const handleGenerate = async () => {
             </Card>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-              {/* Cost summary banner */}
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
                 <Card style={{ textAlign: "center", padding: 12, background: "#FEF0E6" }}>
                   <div style={{ fontSize: 20, fontWeight: 800, color: C.orange }}>₹{totalInputCost.toLocaleString()}</div>
@@ -652,7 +560,6 @@ const handleGenerate = async () => {
         </div>
       )}
 
-      {/* PRODUCE */}
       {tab === "produce" && (
         <div>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
@@ -660,7 +567,6 @@ const handleGenerate = async () => {
             <Btn small variant="green" onClick={() => setAddingProduce(true)}>+ Add Produce</Btn>
           </div>
 
-          {/* Revenue summary banner */}
           {farmer.produce.length > 0 && (
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 14 }}>
               <Card style={{ textAlign: "center", padding: 12, background: "#EBF5FB" }}>
@@ -752,7 +658,6 @@ const handleGenerate = async () => {
         </div>
       )}
 
-      {/* QR TAGS */}
       {tab === "qr" && (
         <div>
           <div style={{ fontWeight: 700, color: C.charcoal, marginBottom: 4 }}>Seed-to-Spoon QR Traceability</div>
@@ -775,12 +680,10 @@ const handleGenerate = async () => {
         </div>
       )}
 
-      {/* MACHINERY */}
       {tab === "machinery" && (
         <MachineryTab farmer={farmer} rentals={farmerRentals} onAddRental={onAddRental} />
       )}
 
-      {/* ECONOMICS */}
       {tab === "economics" && (
         <EconomicsTab
           farmer={farmer}
@@ -802,56 +705,40 @@ const handleGenerate = async () => {
 
 // ─── ECONOMICS TAB ────────────────────────────────────────────────
 function EconomicsTab({ farmer, plan, totalInputCost, totalNetRevenue, totalGrossRevenue, totalCommission, machineryRentalCost, machineryPending, netPL, restorativePremium, totalCosts }) {
-  const [scenario, setScenario] = useState("base"); // base | optimistic | pessimistic
+  const [scenario, setScenario] = useState("base");
 
-  // ── 5-Year Projection Engine ─────────────────────────────────
-  // Base parameters derived from farmer's actual soil + water + land data
   const landAcres = parseFloat((farmer.land * 2.47).toFixed(1));
-
-  // Soil quality multiplier (drives yield trajectory)
   const soilQuality = farmer.soc < 0.3 ? 0.60 : farmer.soc < 0.5 ? 0.78 : farmer.soc < 0.8 ? 0.92 : 1.0;
-
-  // Water reliability multiplier
   const waterMult = { "Canal irrigation": 1.0, "Borewell (perennial)": 0.95, "Borewell (seasonal)": 0.80, "Check dam nearby": 0.75, "Drip irrigation": 1.05, "Rainfed only": 0.55 }[farmer.waterAvail] || 0.75;
-
-  // Monocrop penalty — how much restorative plan helps
   const cropHistory = farmer.cropHistory || "";
   const uniqueCrops = new Set(cropHistory.split(",").map(c => c.trim())).size;
   const monopenalty = uniqueCrops <= 1 ? 0.72 : uniqueCrops <= 2 ? 0.88 : 1.0;
-
-  // Base gross revenue per acre per season (2 seasons/year)
-  const baseRevPerAcre = 18000; // ₹ — Bundelkhand average for diversified smallholder
+  const baseRevPerAcre = 18000;
   const baseGrossAnnual = Math.round(baseRevPerAcre * landAcres * soilQuality * waterMult * monopenalty);
-
-  // Input cost ratio starts high (monocrop), reduces with restorative plan
   const baseInputRatio = uniqueCrops <= 1 ? 0.52 : 0.44;
 
-  // Scenario multipliers: yield growth, cost reduction, price uplift per year
   const SCENARIOS = {
     base:       { yieldGrowth: [1.00, 1.08, 1.18, 1.30, 1.44], costDecline: [1.00, 0.97, 0.93, 0.89, 0.85], priceUplift: [1.00, 1.05, 1.10, 1.15, 1.20], label: "Base Case",       color: C.maroon  },
     optimistic: { yieldGrowth: [1.00, 1.14, 1.30, 1.50, 1.74], costDecline: [1.00, 0.94, 0.88, 0.82, 0.76], priceUplift: [1.00, 1.08, 1.18, 1.28, 1.40], label: "Optimistic",     color: C.green   },
     pessimistic:{ yieldGrowth: [1.00, 1.03, 1.07, 1.12, 1.18], costDecline: [1.00, 0.99, 0.97, 0.95, 0.93], priceUplift: [1.00, 1.02, 1.05, 1.08, 1.11], label: "Pessimistic",    color: C.orange  },
   };
-
   const sc = SCENARIOS[scenario];
 
-  // Build 5-year P&L
   const years = [1, 2, 3, 4, 5].map((yr, i) => {
     const grossRevenue    = Math.round(baseGrossAnnual * sc.yieldGrowth[i] * sc.priceUplift[i]);
     const inputCost       = Math.round(grossRevenue * baseInputRatio * sc.costDecline[i]);
-    const machineryRent   = Math.round(landAcres * 800 * sc.costDecline[i]); // ₹800/acre/yr machinery
-    const squireCommission= Math.round(grossRevenue * 0.065); // 6.5% blended commission
+    const machineryRent   = Math.round(landAcres * 800 * sc.costDecline[i]);
+    const squireCommission= Math.round(grossRevenue * 0.065);
     const totalCostYr     = inputCost + machineryRent + squireCommission;
     const netProfit       = grossRevenue - totalCostYr;
-    const restBonus       = i >= 1 ? Math.round(grossRevenue * (0.06 + i * 0.03)) : 0; // premium grows as SOC recovers
+    const restBonus       = i >= 1 ? Math.round(grossRevenue * (0.06 + i * 0.03)) : 0;
     const netWithBonus    = netProfit + restBonus;
     const roi             = totalCostYr > 0 ? parseFloat(((netProfit / totalCostYr) * 100).toFixed(1)) : 0;
-    const yieldQtl        = parseFloat((landAcres * 15 * soilQuality * sc.yieldGrowth[i]).toFixed(1)); // approx qtl
-    const socProjected    = parseFloat(Math.min(farmer.soc + i * 0.12, 1.8).toFixed(2)); // SOC recovery ~0.12%/yr
+    const yieldQtl        = parseFloat((landAcres * 15 * soilQuality * sc.yieldGrowth[i]).toFixed(1));
+    const socProjected    = parseFloat(Math.min(farmer.soc + i * 0.12, 1.8).toFixed(2));
     return { yr, grossRevenue, inputCost, machineryRent, squireCommission, totalCostYr, netProfit, restBonus, netWithBonus, roi, yieldQtl, socProjected };
   });
 
-  // Cumulative metrics
   const cumNetProfit    = years.reduce((a, y) => a + y.netProfit, 0);
   const cumInvestment   = years.reduce((a, y) => a + y.totalCostYr, 0);
   const cumRevenue      = years.reduce((a, y) => a + y.grossRevenue, 0);
@@ -859,19 +746,14 @@ function EconomicsTab({ farmer, plan, totalInputCost, totalNetRevenue, totalGros
   const breakEvenYr     = years.findIndex(y => y.netProfit > 0) + 1;
   const yr5Growth       = years[4].grossRevenue > 0 ? Math.round(((years[4].grossRevenue - years[0].grossRevenue) / years[0].grossRevenue) * 100) : 0;
 
-  // Chart bar rendering
   const chartMax = Math.max(...years.map(y => y.grossRevenue), 1);
   const BAR_H = 80;
-
-  // Mini sparkline for net profit trend
-  const sparkMax = Math.max(...years.map(y => Math.abs(y.netProfit)), 1);
 
   return (
     <div>
       <div style={{ fontWeight: 800, fontSize: 16, color: C.charcoal, marginBottom: 2 }}>💰 Farmer Financial Projections</div>
       <div style={{ fontSize: 12, color: C.muted, marginBottom: 16 }}>5-year model based on soil data, water profile, land size & Squire restorative plan</div>
 
-      {/* Scenario selector */}
       <div style={{ display: "flex", gap: 8, marginBottom: 18 }}>
         {Object.entries(SCENARIOS).map(([key, s]) => (
           <button key={key} onClick={() => setScenario(key)} style={{
@@ -882,7 +764,6 @@ function EconomicsTab({ farmer, plan, totalInputCost, totalNetRevenue, totalGros
         ))}
       </div>
 
-      {/* Current season snapshot */}
       <Card style={{ marginBottom: 14, background: C.maroonDark }}>
         <div style={{ color: C.goldLight, fontWeight: 700, fontSize: 13, marginBottom: 10 }}>📍 Current Season Snapshot</div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 10 }}>
@@ -900,7 +781,6 @@ function EconomicsTab({ farmer, plan, totalInputCost, totalNetRevenue, totalGros
         </div>
       </Card>
 
-      {/* KPI summary row */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 14 }}>
         {[
           { label: "5-Yr Cum. Revenue",  value: `₹${(cumRevenue/100000).toFixed(1)}L`,   icon: "📈", color: C.blue },
@@ -918,7 +798,6 @@ function EconomicsTab({ farmer, plan, totalInputCost, totalNetRevenue, totalGros
         ))}
       </div>
 
-      {/* Revenue vs Cost Bar Chart */}
       <Card style={{ marginBottom: 14 }}>
         <div style={{ fontWeight: 700, color: C.maroon, fontSize: 13, marginBottom: 14 }}>📊 Revenue vs Cost — 5-Year Projection</div>
         <div style={{ display: "flex", alignItems: "flex-end", gap: 6, height: BAR_H + 40, marginBottom: 8 }}>
@@ -943,7 +822,6 @@ function EconomicsTab({ farmer, plan, totalInputCost, totalNetRevenue, totalGros
         </div>
       </Card>
 
-      {/* Year-by-year P&L table */}
       <Card style={{ marginBottom: 14 }}>
         <div style={{ fontWeight: 700, color: C.maroon, fontSize: 13, marginBottom: 12 }}>📋 Year-by-Year P&L Breakdown</div>
         <div style={{ overflowX: "auto" }}>
@@ -987,7 +865,6 @@ function EconomicsTab({ farmer, plan, totalInputCost, totalNetRevenue, totalGros
         </div>
       </Card>
 
-      {/* ROI & Investment return card */}
       <Card style={{ marginBottom: 14 }}>
         <div style={{ fontWeight: 700, color: C.maroon, fontSize: 13, marginBottom: 12 }}>🎯 Return on Investment Analysis</div>
         {years.map((y, i) => (
@@ -1004,12 +881,11 @@ function EconomicsTab({ farmer, plan, totalInputCost, totalNetRevenue, totalGros
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 12, paddingTop: 10, borderTop: `1px solid ${C.border}` }}>
           <div style={{ fontSize: 12, color: C.muted }}>5-Year Cumulative Investment: <strong style={{ color: C.charcoal }}>₹{(cumInvestment/100000).toFixed(2)}L</strong></div>
           <div style={{ fontSize: 12, color: C.muted }}>5-Year Cumulative Return: <strong style={{ color: C.green }}>₹{(cumNetProfit/100000).toFixed(2)}L</strong></div>
-          <div style={{ fontSize: 12, color: C.muted }}>Overall 5-Yr ROI: <strong style={{ color: C.maroon }}>₹{cumInvestment > 0 ? ((cumNetProfit / cumInvestment)*100).toFixed(1) : 0}%</strong></div>
+          <div style={{ fontSize: 12, color: C.muted }}>Overall 5-Yr ROI: <strong style={{ color: C.maroon }}>{cumInvestment > 0 ? ((cumNetProfit / cumInvestment)*100).toFixed(1) : 0}%</strong></div>
           <div style={{ fontSize: 12, color: C.muted }}>With Restorative Premium: <strong style={{ color: C.green }}>+₹{(years.reduce((a,y)=>a+y.restBonus,0)/1000).toFixed(1)}K</strong></div>
         </div>
       </Card>
 
-      {/* SOC recovery & long-term land value */}
       <Card style={{ marginBottom: 14 }}>
         <div style={{ fontWeight: 700, color: C.maroon, fontSize: 13, marginBottom: 12 }}>🌱 Soil Recovery & Land Value Trajectory</div>
         {years.map((y, i) => (
@@ -1028,7 +904,6 @@ function EconomicsTab({ farmer, plan, totalInputCost, totalNetRevenue, totalGros
         <div style={{ fontSize: 11, color: C.muted, marginTop: 8 }}>SOC recovery rate: ~0.12%/yr with Squire restorative plan. Target: &gt;0.8% by Year 5. Each 0.1% SOC gain = ~6% yield improvement.</div>
       </Card>
 
-      {/* Assumptions card */}
       <Card style={{ background: "#F0F4FF", border: `1px solid #BFD0FF` }}>
         <div style={{ fontWeight: 700, color: C.blue, fontSize: 12, marginBottom: 8 }}>📐 Model Assumptions</div>
         <div style={{ fontSize: 11, color: C.muted, lineHeight: 1.8 }}>
@@ -1066,7 +941,6 @@ function MachineryTab({ farmer, rentals, onAddRental }) {
       <div style={{ fontWeight: 700, color: C.charcoal, marginBottom: 4 }}>Machinery Rental Bay</div>
       <div style={{ fontSize: 13, color: C.muted, marginBottom: 16 }}>Rent specialized equipment by the hour from your nearest Squire Outlet.</div>
 
-      {/* Booking form */}
       {booking && (
         <Card style={{ marginBottom: 16, background: C.soilLight, border: `1.5px solid ${C.gold}` }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
@@ -1089,7 +963,6 @@ function MachineryTab({ farmer, rentals, onAddRental }) {
         </Card>
       )}
 
-      {/* Equipment grid */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 20 }}>
         {EQUIPMENT_LIST.map(eq => (
           <Card key={eq.name} style={{ padding: 14, opacity: eq.available ? 1 : 0.6 }}>
@@ -1106,7 +979,6 @@ function MachineryTab({ farmer, rentals, onAddRental }) {
         ))}
       </div>
 
-      {/* Rental history */}
       <div style={{ fontWeight: 700, color: C.charcoal, marginBottom: 10 }}>Rental History</div>
       {rentals.length === 0 ? (
         <Card style={{ textAlign: "center", padding: 24 }}>
@@ -1229,7 +1101,6 @@ function Dashboard({ farmers, onSelect, onNew, onViewReports, onViewMachinery })
     pending: { bg: "#F7E8C9", color: "#8A5A12", label: "Pending" },
   };
 
-  // Simple inline chart using SVG bars
   const REVENUE_DATA = [
     { crop: "Wheat",   rev: 182000, color: "#6B1E3B" },
     { crop: "Mustard", rev: 134000, color: "#C8963E" },
@@ -1259,9 +1130,7 @@ function Dashboard({ farmers, onSelect, onNew, onViewReports, onViewMachinery })
   return (
     <div style={{ display: "flex", minHeight: "100vh", fontFamily: "'Inter', sans-serif" }}>
 
-      {/* ── Sidebar ── */}
       <aside style={S.sidebar}>
-        {/* Brand */}
         <div style={{ display: "flex", alignItems: "center", gap: 10, paddingBottom: 24, borderBottom: "1px solid rgba(255,255,255,.08)", marginBottom: 22 }}>
           <div style={{ width: 36, height: 36, borderRadius: 10, background: "linear-gradient(135deg,#C8963E 0%,#6B1E3B 100%)", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, color: "#fff", fontSize: 18, flexShrink: 0 }}>S</div>
           <div>
@@ -1270,7 +1139,6 @@ function Dashboard({ farmers, onSelect, onNew, onViewReports, onViewMachinery })
           </div>
         </div>
 
-        {/* Nav */}
         <nav style={{ display: "flex", flexDirection: "column", gap: 2 }}>
           {NAV.map(n => (
             <button key={n.id} onClick={() => scrollTo(n.id)}
@@ -1282,14 +1150,12 @@ function Dashboard({ farmers, onSelect, onNew, onViewReports, onViewMachinery })
           ))}
         </nav>
 
-        {/* Action buttons */}
         <div style={{ display: "flex", flexDirection: "column", gap: 8, margin: "20px 0" }}>
           <button onClick={onNew} style={{ background: "#6B1E3B", color: "#fff", border: "none", borderRadius: 8, padding: "9px 14px", fontSize: 13, fontWeight: 600, cursor: "pointer", textAlign: "left" }}>+ Onboard Farmer</button>
           <button onClick={onViewReports} style={{ background: "rgba(255,255,255,.07)", color: "#E9DFD2", border: "1px solid rgba(255,255,255,.12)", borderRadius: 8, padding: "9px 14px", fontSize: 13, fontWeight: 500, cursor: "pointer", textAlign: "left" }}>📊 Statistical Reports</button>
           <button onClick={onViewMachinery} style={{ background: "rgba(255,255,255,.07)", color: "#E9DFD2", border: "1px solid rgba(255,255,255,.12)", borderRadius: 8, padding: "9px 14px", fontSize: 13, fontWeight: 500, cursor: "pointer", textAlign: "left" }}>🚜 Machinery Hub</button>
         </div>
 
-        {/* Footer user */}
         <div style={{ marginTop: "auto", paddingTop: 18, borderTop: "1px solid rgba(255,255,255,.08)", display: "flex", alignItems: "center", gap: 10 }}>
           <div style={{ width: 32, height: 32, borderRadius: "50%", background: "#6B1E3B", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 600, color: "#fff", flexShrink: 0 }}>HV</div>
           <div>
@@ -1299,10 +1165,8 @@ function Dashboard({ farmers, onSelect, onNew, onViewReports, onViewMachinery })
         </div>
       </aside>
 
-      {/* ── Main ── */}
       <main style={S.main}>
 
-        {/* Topbar */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 24, marginBottom: 22, flexWrap: "wrap" }}>
           <div>
             <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: "#8A7C6C", marginBottom: 4 }}>Bundelkhand Pilot · Jhansi Cluster</div>
@@ -1317,7 +1181,6 @@ function Dashboard({ farmers, onSelect, onNew, onViewReports, onViewMachinery })
           </div>
         </div>
 
-        {/* Season strip */}
         <div style={{ display: "flex", alignItems: "center", gap: 0, marginBottom: 22, background: "#fff", border: "1px solid #E8DFD2", borderRadius: 12, padding: "14px 20px", boxShadow: "0 1px 2px rgba(43,33,27,.04)" }}>
           <div style={{ fontSize: 11, fontWeight: 600, color: "#8A7C6C", letterSpacing: "0.05em", textTransform: "uppercase", marginRight: 18, whiteSpace: "nowrap" }}>Crop Season</div>
           <div style={{ flex: 1, display: "flex", gap: 6, position: "relative", paddingTop: 22 }}>
@@ -1334,7 +1197,6 @@ function Dashboard({ farmers, onSelect, onNew, onViewReports, onViewMachinery })
           </div>
         </div>
 
-        {/* Alert bar */}
         <div style={{ display: "flex", alignItems: "center", gap: 10, background: "#F7E8C9", color: "#8A5A12", border: "1px solid #EBD49C", borderRadius: 11, padding: "11px 16px", marginBottom: 26, fontSize: 13, fontWeight: 500 }}>
           ⚠️ <span><strong>2 seed varieties</strong> are below reorder threshold and <strong>1 Mandi price alert</strong> needs review.</span>
         </div>
@@ -1377,7 +1239,6 @@ function Dashboard({ farmers, onSelect, onNew, onViewReports, onViewMachinery })
           </div>
 
           <div style={{ display: "grid", gridTemplateColumns: "1.55fr 1fr", gap: 18, marginBottom: 18 }}>
-            {/* Mandi price trend (SVG line chart) */}
             <div style={{ background: "#fff", border: "1px solid #E8DFD2", borderRadius: 14, padding: 20 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
                 <h3 style={{ fontFamily: "serif", fontWeight: 600, fontSize: 16 }}>Mandi Price Trend (₹ / Quintal)</h3>
@@ -1394,7 +1255,6 @@ function Dashboard({ farmers, onSelect, onNew, onViewReports, onViewMachinery })
                   </span>
                 ))}
               </div>
-              {/* SVG line chart */}
               <svg viewBox="0 0 400 130" width="100%" style={{ overflow: "visible" }}>
                 {[0,0.25,0.5,0.75,1].map((t, i) => (
                   <line key={i} x1="0" y1={t * 100 + 10} x2="400" y2={t * 100 + 10} stroke="#EFE8DB" strokeWidth="1" />
@@ -1418,7 +1278,6 @@ function Dashboard({ farmers, onSelect, onNew, onViewReports, onViewMachinery })
               </svg>
             </div>
 
-            {/* Snapshot */}
             <div style={{ background: "#fff", border: "1px solid #E8DFD2", borderRadius: 14, padding: 20 }}>
               <h3 style={{ fontFamily: "serif", fontWeight: 600, fontSize: 16, marginBottom: 14 }}>This Week's Snapshot</h3>
               {[
@@ -1437,7 +1296,6 @@ function Dashboard({ farmers, onSelect, onNew, onViewReports, onViewMachinery })
             </div>
           </div>
 
-          {/* Revenue by crop + Transactions */}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1.2fr", gap: 18 }}>
             <div style={{ background: "#fff", border: "1px solid #E8DFD2", borderRadius: 14, padding: 20 }}>
               <h3 style={{ fontFamily: "serif", fontWeight: 600, fontSize: 16, marginBottom: 14 }}>Revenue by Crop · This Month</h3>
@@ -1586,7 +1444,6 @@ function Dashboard({ farmers, onSelect, onNew, onViewReports, onViewMachinery })
               ))}
             </div>
           </div>
-          {/* Live farmer records from app data */}
           <div style={{ background: "#fff", border: "1px solid #E8DFD2", borderRadius: 14, padding: 20 }}>
             <h3 style={{ fontFamily: "serif", fontWeight: 600, fontSize: 16, marginBottom: 14 }}>Live Farmer Records</h3>
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -1647,7 +1504,6 @@ function Dashboard({ farmers, onSelect, onNew, onViewReports, onViewMachinery })
           </div>
         </section>
 
-        {/* Footer */}
         <div style={{ marginTop: 50, paddingTop: 20, borderTop: "1px solid #E8DFD2", display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
           <p style={{ fontSize: 11, color: "#8A7C6C" }}>Squire Digital Brain · Internal Operations Dashboard · Bundelkhand Pilot</p>
           <span style={{ fontSize: 10, fontWeight: 700, color: "#8A7C6C", background: "#FAF6EF", border: "1px solid #E8DFD2", padding: "3px 9px", borderRadius: 20 }}>Live data from app</span>
@@ -1659,13 +1515,9 @@ function Dashboard({ farmers, onSelect, onNew, onViewReports, onViewMachinery })
 
 // ─── REPORTS VIEW ────────────────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════
-// SQUIRE STATISTICAL ENGINE — all models run on entered farmer data
+// SQUIRE STATISTICAL ENGINE
 // ═══════════════════════════════════════════════════════════════
 
-// ── Model 1: Soil Degradation Risk Score (weighted regression) ──
-// Inputs: N, P, K (kg/ha), SOC (%), soil type penalty
-// Formula: DRS = 100 - [w_N*(N/400) + w_P*(P/80) + w_K*(K/400) + w_SOC*(SOC/1.2)] * 100
-// Weights calibrated to Bundelkhand semi-arid soil research
 const SOIL_TYPE_PENALTY = { "Sandy Loam": 0, "Clay Loam": -3, "Red Laterite": -8, "Black Cotton": -5, "Sandy": -12, "Clay": -6, "Silty Loam": 2 };
 function calcDegradationRisk(f) {
   const wN = 0.30, wP = 0.20, wK = 0.15, wSOC = 0.35;
@@ -1681,9 +1533,6 @@ function calcDegradationRisk(f) {
   return { drs, grade, color };
 }
 
-// ── Model 2: Crop Profitability Forecast (yield × Mandi benchmark) ──
-// Inputs: land (Ha), soil N/SOC, water type → yield estimate
-// Mandi prices sourced from e-NAM benchmarks (₹/quintal, Jun 2026)
 const MANDI_PRICES = { "Wheat": 2275, "Paddy": 2300, "Mustard": 5650, "Gram": 5440, "Arhar (Pigeon Pea)": 7000, "Lentil": 6000, "Sunflower": 6760, "Sesame": 9000, "Soybean": 4600, "Maize": 2090 };
 const WATER_YIELD_MULTIPLIER = { "Canal irrigation": 1.0, "Borewell (perennial)": 0.95, "Borewell (seasonal)": 0.80, "Check dam nearby": 0.75, "Drip irrigation": 1.05, "Rainfed only": 0.55 };
 const BASE_YIELD_QTL_PER_HA = { "Wheat": 32, "Paddy": 28, "Mustard": 14, "Gram": 12, "Arhar (Pigeon Pea)": 10, "Lentil": 9, "Sunflower": 12, "Sesame": 6, "Soybean": 15, "Maize": 35 };
@@ -1697,23 +1546,20 @@ function calcProfitForecast(f) {
     const yieldQtl = parseFloat((base * waterMult * soilMult * nMult * f.land).toFixed(1));
     const price = MANDI_PRICES[crop] || 3000;
     const grossRev = Math.round(yieldQtl * price);
-    const inputCost = Math.round(grossRev * 0.42); // ~42% input cost ratio for monocrop
+    const inputCost = Math.round(grossRev * 0.42);
     const netProfit = grossRev - inputCost;
-    const restorativeBonus = Math.round(netProfit * 0.18); // 18% premium for restorative plan
+    const restorativeBonus = Math.round(netProfit * 0.18);
     return { crop, yieldQtl, price, grossRev, inputCost, netProfit, restorativeBonus };
   });
 }
 
-// ── Model 3: Pest Infestation Risk Index (Stochastic / Bayesian) ──
-// P(infestation) = base_rate × soil_modifier × water_modifier × history_modifier
-// Based on Bundelkhand pest outbreak historical data approximations
 const PEST_BASE_RATES = { "Wheat": 0.32, "Paddy": 0.48, "Mustard": 0.38, "Gram": 0.42, "Arhar (Pigeon Pea)": 0.45, "Maize": 0.28, "default": 0.35 };
 const WATER_PEST_MOD = { "Rainfed only": 0.7, "Borewell (seasonal)": 1.0, "Canal irrigation": 1.3, "Borewell (perennial)": 1.2, "Drip irrigation": 0.85, "Check dam nearby": 0.9 };
 const MONOCROP_PEST_MOD = (history) => {
   if (!history) return 1.0;
   const crops = history.split(",").map(c => c.trim());
   const unique = new Set(crops).size;
-  return unique === 1 ? 1.6 : unique === 2 ? 1.2 : 0.9; // monocrop = 60% higher risk
+  return unique === 1 ? 1.6 : unique === 2 ? 1.2 : 0.9;
 };
 const PEST_BY_CROP = { "Wheat": ["Aphids", "Yellow Rust", "Karnal Bunt"], "Paddy": ["Brown Planthopper", "Blast", "Stem Borer"], "Mustard": ["Aphids", "Alternaria Blight"], "Gram": ["Pod Borer", "Wilt"], "default": ["Aphids", "Leaf Spot"] };
 function calcPestRisk(f) {
@@ -1731,9 +1577,6 @@ function calcPestRisk(f) {
   return { prob, pct, grade, color, pests, lastCrop };
 }
 
-// ── Model 4: Wet/Dry Week Calendar (Markov Chain approximation) ──
-// Transition matrix P(wet→wet), P(dry→dry) calibrated per water source
-// Outputs: 12-month wet/dry week counts + sowing/irrigation windows
 const WATER_TRANSITION = {
   "Canal irrigation":      { ww: 0.72, dd: 0.78 },
   "Borewell (perennial)":  { ww: 0.65, dd: 0.80 },
@@ -1743,7 +1586,7 @@ const WATER_TRANSITION = {
   "Rainfed only":          { ww: 0.40, dd: 0.90 },
 };
 const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-const MONSOON_BASE = [0.1,0.1,0.15,0.2,0.25,0.55,0.85,0.80,0.60,0.25,0.1,0.1]; // base wet probability by month
+const MONSOON_BASE = [0.1,0.1,0.15,0.2,0.25,0.55,0.85,0.80,0.60,0.25,0.1,0.1];
 function calcWeatherCalendar(f) {
   const trans = WATER_TRANSITION[f.waterAvail] || { ww: 0.45, dd: 0.85 };
   return MONTHS.map((month, i) => {
@@ -1752,13 +1595,12 @@ function calcWeatherCalendar(f) {
     const wetWeeks = Math.round(adjustedPwet * 4);
     const dryWeeks = 4 - wetWeeks;
     const action = wetWeeks >= 3 ? "Irrigate / Monitor waterlog" : wetWeeks === 2 ? "Normal ops" : wetWeeks === 1 ? "Supplement irrigation" : "Drought alert — irrigate";
-    const isSowingWindow = [10, 11, 0].includes(i); // Oct-Dec rabi sowing
-    const isHarvestWindow = [2, 3, 4].includes(i);  // Mar-May rabi harvest
+    const isSowingWindow = [10, 11, 0].includes(i);
+    const isHarvestWindow = [2, 3, 4].includes(i);
     return { month, wetWeeks, dryWeeks, action, isSowingWindow, isHarvestWindow };
   });
 }
 
-// ── Stat Bar sub-component ──────────────────────────────────────
 function StatBar({ label, value, max, color, suffix = "" }) {
   const pct = Math.min(Math.round((value / max) * 100), 100);
   return (
@@ -1774,7 +1616,6 @@ function StatBar({ label, value, max, color, suffix = "" }) {
   );
 }
 
-// ── Formula chip ────────────────────────────────────────────────
 function FormulaChip({ text }) {
   return (
     <div style={{ background: "#1A1A2E", color: "#A8D8A8", fontFamily: "monospace", fontSize: 10, padding: "6px 10px", borderRadius: 6, marginBottom: 8, lineHeight: 1.6, overflowX: "auto" }}>
@@ -1793,12 +1634,9 @@ function Reports({ farmers, rentals, onBack }) {
   const sold = allProduce.filter(p => p.stage === "Sold").length;
   const inStorage = allProduce.filter(p => p.stage === "Cold Storage").length;
   const buyerMatched = allProduce.filter(p => p.stage === "Buyer Matched").length;
-  const totalQty = allProduce.reduce((a, p) => a + (parseFloat(p.qty) || 0), 0);
   const totalRentalRevenue = rentals.filter(r => r.status === "Completed").reduce((a, r) => a + r.totalCost, 0);
   const confirmedRentals = rentals.filter(r => r.status === "Confirmed").length;
-  const avgSoc = farmers.length ? (farmers.reduce((a, f) => a + f.soc, 0) / farmers.length).toFixed(2) : 0;
 
-  // Run all models
   const farmerStats = farmers.map(f => ({
     ...f,
     degradation: calcDegradationRisk(f),
@@ -1830,7 +1668,6 @@ function Reports({ farmers, rentals, onBack }) {
         </div>
       </div>
 
-      {/* Report tabs */}
       <div style={{ display: "flex", gap: 2, borderBottom: `2px solid ${C.border}`, marginBottom: 20, overflowX: "auto" }}>
         {TABS.map(t => (
           <button key={t.key} onClick={() => setTab(t.key)}
@@ -1840,7 +1677,6 @@ function Reports({ farmers, rentals, onBack }) {
         ))}
       </div>
 
-      {/* ── OVERVIEW ── */}
       {tab === "overview" && (
         <div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 16 }}>
@@ -1863,7 +1699,6 @@ function Reports({ farmers, rentals, onBack }) {
             ))}
           </div>
 
-          {/* Produce pipeline */}
           <Card style={{ marginBottom: 14 }}>
             <div style={{ fontWeight: 700, color: C.maroon, fontSize: 13, marginBottom: 12 }}>📦 Produce Pipeline</div>
             {[["Harvested", allProduce.filter(p=>p.stage==="Harvested").length, C.gold],
@@ -1876,7 +1711,6 @@ function Reports({ farmers, rentals, onBack }) {
             ))}
           </Card>
 
-          {/* Cluster summary card */}
           <Card style={{ background: C.maroonDark }}>
             <div style={{ color: C.goldLight, fontWeight: 700, fontSize: 13, marginBottom: 8 }}>📋 Cluster Statistical Summary</div>
             <div style={{ fontSize: 12, color: "rgba(255,255,255,0.85)", lineHeight: 2 }}>
@@ -1888,7 +1722,6 @@ function Reports({ farmers, rentals, onBack }) {
         </div>
       )}
 
-      {/* ── SOIL DEGRADATION RISK MODEL ── */}
       {tab === "soil" && (
         <div>
           <Card style={{ marginBottom: 14, background: "#F0F4FF" }}>
@@ -1924,7 +1757,6 @@ function Reports({ farmers, rentals, onBack }) {
         </div>
       )}
 
-      {/* ── PROFITABILITY FORECAST MODEL ── */}
       {tab === "profit" && (
         <div>
           <Card style={{ marginBottom: 14, background: "#F0F4FF" }}>
@@ -1962,7 +1794,6 @@ function Reports({ farmers, rentals, onBack }) {
         </div>
       )}
 
-      {/* ── PEST INFESTATION RISK INDEX ── */}
       {tab === "pest" && (
         <div>
           <Card style={{ marginBottom: 14, background: "#F0F4FF" }}>
@@ -2001,7 +1832,6 @@ function Reports({ farmers, rentals, onBack }) {
         </div>
       )}
 
-      {/* ── WEATHER WET/DRY CALENDAR ── */}
       {tab === "weather" && (
         <div>
           <Card style={{ marginBottom: 14, background: "#F0F4FF" }}>
@@ -2044,112 +1874,6 @@ function Reports({ farmers, rentals, onBack }) {
   );
 }
 
-// ─── MACHINERY HUB ───────────────────────────────────────────────
-function MachineryHub({ rentals, onBack, onAddRental, farmers }) {
-  const [booking, setBooking] = useState(null);
-  const [form, setForm] = useState({ farmerId: "", startDate: "", endDate: "", hours: "" });
-  const set = k => v => setForm(f => ({ ...f, [k]: v }));
-  const totalCost = booking ? Math.round(booking.ratePerHour * (parseInt(form.hours) || 0)) : 0;
-  const selectedFarmer = farmers.find(f => f.id === form.farmerId);
-
-  const handleConfirm = () => {
-    if (!form.farmerId || !form.startDate || !form.endDate || !form.hours) return;
-    onAddRental({ id: "R" + Date.now(), farmerId: form.farmerId, farmerName: selectedFarmer?.name || "", equipment: booking.name, startDate: form.startDate, endDate: form.endDate, hours: parseInt(form.hours), ratePerHour: booking.ratePerHour, totalCost, status: "Confirmed" });
-    setBooking(null); setForm({ farmerId: "", startDate: "", endDate: "", hours: "" });
-  };
-
-  return (
-    <div>
-      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20 }}>
-        <button onClick={onBack} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 22, color: C.muted }}>←</button>
-        <div>
-          <div style={{ fontWeight: 800, fontSize: 20, color: C.charcoal }}>Machinery Rental Hub</div>
-          <div style={{ fontSize: 13, color: C.muted }}>Squire Outlet — Jhansi Cluster</div>
-        </div>
-      </div>
-
-      {/* Stats */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 20 }}>
-        <Card style={{ textAlign: "center", padding: 14 }}>
-          <div style={{ fontSize: 22, fontWeight: 800, color: C.green }}>₹{rentals.filter(r=>r.status==="Completed").reduce((a,r)=>a+r.totalCost,0)}</div>
-          <div style={{ fontSize: 11, color: C.muted }}>Revenue Collected</div>
-        </Card>
-        <Card style={{ textAlign: "center", padding: 14 }}>
-          <div style={{ fontSize: 22, fontWeight: 800, color: C.blue }}>{rentals.filter(r=>r.status==="Confirmed").length}</div>
-          <div style={{ fontSize: 11, color: C.muted }}>Active Bookings</div>
-        </Card>
-        <Card style={{ textAlign: "center", padding: 14 }}>
-          <div style={{ fontSize: 22, fontWeight: 800, color: C.maroon }}>{EQUIPMENT_LIST.filter(e=>e.available).length}</div>
-          <div style={{ fontSize: 11, color: C.muted }}>Available Now</div>
-        </Card>
-      </div>
-
-      {/* Booking form */}
-      {booking && (
-        <Card style={{ marginBottom: 16, background: C.soilLight, border: `1.5px solid ${C.gold}` }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-            <div style={{ fontWeight: 700, color: C.maroon, fontSize: 15 }}>{booking.icon} Book: {booking.name}</div>
-            <button onClick={() => setBooking(null)} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 18, color: C.muted }}>✕</button>
-          </div>
-          <div style={{ fontSize: 13, color: C.muted, marginBottom: 12 }}>Rate: <strong style={{ color: C.green }}>₹{booking.ratePerHour}/hr</strong></div>
-          <Input label="Select Farmer" value={form.farmerId} onChange={set("farmerId")} options={farmers.map(f => f.id)} required hint={selectedFarmer ? selectedFarmer.name : "Choose farmer"} />
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
-            <Input label="Start Date" value={form.startDate} onChange={set("startDate")} type="date" required />
-            <Input label="End Date" value={form.endDate} onChange={set("endDate")} type="date" required />
-            <Input label="Hours" value={form.hours} onChange={set("hours")} type="number" required />
-          </div>
-          {form.hours && <div style={{ background: C.greenPale, borderRadius: 8, padding: "10px 14px", marginBottom: 12, fontSize: 14 }}>
-            Estimated: <strong style={{ color: C.green }}>₹{totalCost}</strong>
-          </div>}
-          <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
-            <Btn small variant="ghost" onClick={() => setBooking(null)}>Cancel</Btn>
-            <Btn small variant="green" onClick={handleConfirm} disabled={!form.farmerId || !form.startDate || !form.endDate || !form.hours}>Confirm Booking</Btn>
-          </div>
-        </Card>
-      )}
-
-      {/* Equipment */}
-      <div style={{ fontWeight: 700, color: C.charcoal, fontSize: 14, marginBottom: 12 }}>Available Equipment</div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 20 }}>
-        {EQUIPMENT_LIST.map(eq => (
-          <Card key={eq.name} style={{ padding: 14, opacity: eq.available ? 1 : 0.55 }}>
-            <div style={{ fontSize: 26, marginBottom: 6 }}>{eq.icon}</div>
-            <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 2 }}>{eq.name}</div>
-            <div style={{ fontSize: 11, color: C.muted, marginBottom: 8, lineHeight: 1.4 }}>{eq.desc}</div>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <span style={{ fontSize: 13, fontWeight: 700, color: C.green }}>₹{eq.ratePerHour}/hr</span>
-              {eq.available ? <Btn small variant="primary" onClick={() => { setBooking(eq); }}>Book</Btn> : <Badge color="gray">Unavailable</Badge>}
-            </div>
-          </Card>
-        ))}
-      </div>
-
-      {/* All rental log */}
-      <div style={{ fontWeight: 700, color: C.charcoal, fontSize: 14, marginBottom: 12 }}>All Rentals</div>
-      {rentals.length === 0 ? (
-        <Card style={{ textAlign: "center", padding: 24 }}><div style={{ color: C.muted }}>No rentals yet.</div></Card>
-      ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          {rentals.map(r => (
-            <Card key={r.id} style={{ padding: 14 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
-                <div>
-                  <div style={{ fontWeight: 700, fontSize: 14 }}>{r.equipment}</div>
-                  <div style={{ fontSize: 12, color: C.muted }}>{r.farmerName} · {r.startDate} · {r.hours} hrs</div>
-                </div>
-                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                  <span style={{ fontWeight: 700, color: C.green }}>₹{r.totalCost}</span>
-                  <Badge color={r.status === "Completed" ? "green" : r.status === "Confirmed" ? "blue" : "gold"}>{r.status}</Badge>
-                </div>
-              </div>
-            </Card>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
 // ─── MAIN APP ─────────────────────────────────────────────────────
 export default function App() {
   const [view, setView] = useState("dashboard");
@@ -2161,14 +1885,12 @@ export default function App() {
   const handleUpdateFarmer = (updated) => { setFarmers(prev => prev.map(f => f.id === updated.id ? updated : f)); setSelected(updated); };
   const handleSelectFarmer = (f) => { setSelected(f); setView("detail"); };
   const handleAddRental = (rental) => setRentals(prev => [...prev, rental]);
-  const handleSaveKey = (k) => { _geminiKey = k; setApiKey(k); setShowKeyInput(false); };
 
   const liveSelected = selected ? farmers.find(f => f.id === selected.id) || selected : null;
   const breadcrumb = { onboard: "Onboard Farmer", detail: liveSelected?.name || "", reports: "Reports", machinery: "Machinery Hub" };
 
   return (
     <div style={{ fontFamily: "'Inter', system-ui, sans-serif", background: C.cream, minHeight: "100vh" }}>
-      {/* Header */}
       <div style={{ background: C.maroonDark, padding: "0 20px" }}>
         <div style={{ maxWidth: 820, margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "space-between", height: 56 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }} onClick={() => setView("dashboard")}>
@@ -2189,31 +1911,6 @@ export default function App() {
         </div>
       </div>
 
-      {/* Inline key entry panel */}
-      {showKeyInput && (
-        <div style={{ background: "#1A1A2E", padding: "16px 20px", borderBottom: `2px solid ${C.gold}` }}>
-          <div style={{ maxWidth: 820, margin: "0 auto" }}>
-            <div style={{ color: C.goldLight, fontWeight: 700, fontSize: 13, marginBottom: 10 }}>
-              🔑 Gemini API Key — <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer" style={{ color: "#90CAF9" }}>Get free key at aistudio.google.com</a>
-            </div>
-            <div style={{ display: "flex", gap: 8 }}>
-              <input
-                type="password"
-                placeholder="Paste your Gemini API key (AIza...)"
-                defaultValue={apiKey}
-                id="hdr-key-input"
-                style={{ flex: 1, padding: "8px 12px", borderRadius: 6, border: `1px solid ${C.gold}`, background: "#0D0D1A", color: C.white, fontSize: 13, outline: "none" }}
-                onKeyDown={e => { if (e.key === "Enter") handleSaveKey(e.target.value); }}
-              />
-              <Btn small variant="gold" onClick={() => handleSaveKey(document.getElementById("hdr-key-input").value)}>Save Key</Btn>
-              <Btn small variant="ghost" style={{ color: C.goldLight, borderColor: C.goldLight }} onClick={() => setShowKeyInput(false)}>✕</Btn>
-            </div>
-            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 6 }}>Free tier: 1,500 AI plans/day · Key stays in your browser session only · Never stored on any server</div>
-          </div>
-        </div>
-      )}
-
-      {/* Breadcrumb */}
       {view !== "dashboard" && (
         <div style={{ background: C.soilLight, borderBottom: `1px solid ${C.border}`, padding: "8px 20px" }}>
           <div style={{ maxWidth: 820, margin: "0 auto", fontSize: 13, color: C.muted }}>
@@ -2223,7 +1920,6 @@ export default function App() {
         </div>
       )}
 
-      {/* Body */}
       <div style={{ maxWidth: 820, margin: "0 auto", padding: "24px 16px" }}>
         {view === "dashboard" && (
           <>
