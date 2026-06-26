@@ -215,11 +215,8 @@ let _geminiKey = "";
 export function setGeminiKey(k) { _geminiKey = k.trim(); }
 export function getGeminiKey() { return _geminiKey; }
 
-// ─── AI CROP PLAN — Gemini Direct Browser Call ───────────────────
+// ─── AI CROP PLAN — Secure Serverless Proxy Call ───────────────────
 async function generateCropPlan(farmer) {
-  const apiKey = _geminiKey;
-  if (!apiKey) throw new Error("NO_KEY");
-
   const prompt = `You are Squire Digital Brain — an AI agricultural planning system for restorative farming in semi-arid India (Bundelkhand/Central UP).
 
 FARMER PROFILE:
@@ -237,46 +234,25 @@ Return ONLY a single compact JSON object. No markdown. No text before or after. 
 
 Replace ALL values to match this farmer's data. Same keys, same structure. Strings under 60 chars.`;
 
-  let res;
   try {
-    // Gemini supports CORS — can be called directly from browser
-   res = await fetch(
-  `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
-     {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: { temperature: 0.2, maxOutputTokens: 2048 },
-        }),
-      }
-    );
-  } catch (networkErr) {
-    throw new Error(`Network error: ${networkErr.message}`);
-  }
+    // Calling YOUR secure backend (api/gemini.js), NOT Google directly
+    const res = await fetch("/api/gemini", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt }),
+    });
 
-  if (!res.ok) {
-    let errBody = "";
-    try { errBody = await res.text(); } catch (_) {}
-    throw new Error(`Gemini API error ${res.status}: ${errBody.slice(0, 300)}`);
-  }
+    const data = await res.json();
 
-  let data;
-  try { data = await res.json(); } catch (e) { throw new Error("Failed to parse Gemini response"); }
+    if (!res.ok) {
+      throw new Error(data.error || `Server error: ${res.status}`);
+    }
 
-  const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
-  if (!text) throw new Error(`Empty Gemini response. Raw: ${JSON.stringify(data).slice(0, 200)}`);
-
-  const jsonMatch = text.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) throw new Error(`No JSON found. Got: ${text.slice(0, 200)}`);
-
-  try {
-    return JSON.parse(jsonMatch[0]);
-  } catch (jsonErr) {
-    throw new Error(`JSON parse failed: ${jsonErr.message}. Raw: ${jsonMatch[0].slice(0, 200)}`);
+    return JSON.parse(data.text);
+  } catch (err) {
+    throw new Error(`Failed to generate plan: ${err.message}`);
   }
 }
-
 // ─── API KEY GATE ─────────────────────────────────────────────────
 function ApiKeyGate({ onSave }) {
   const [key, setKey] = useState("");
