@@ -2156,8 +2156,6 @@ export default function App() {
   const [farmers, setFarmers] = useState(INITIAL_FARMERS);
   const [selected, setSelected] = useState(null);
   const [rentals, setRentals] = useState(INITIAL_RENTALS);
-  const [apiKey, setApiKey] = useState("");
-  const [showKeyInput, setShowKeyInput] = useState(false);
 
   const handleSaveFarmer = (farmer) => { setFarmers(prev => [...prev, farmer]); setView("dashboard"); };
   const handleUpdateFarmer = (updated) => { setFarmers(prev => prev.map(f => f.id === updated.id ? updated : f)); setSelected(updated); };
